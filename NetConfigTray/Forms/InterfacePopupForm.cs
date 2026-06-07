@@ -128,7 +128,11 @@ public sealed class InterfacePopupForm : Form
         _splitContainer.Panel1.Controls.Add(_interfaceList);
         _splitContainer.Panel1.Controls.Add(_sparkline);
         _splitContainer.Panel1.Padding = new Padding(8, 10, 4, 10);
-        _splitContainer.Panel1.Resize += (_, _) => ResizeInterfaceListColumns();
+        _splitContainer.Panel1.Resize += (_, _) =>
+        {
+            UpdateSparklineHeight();
+            ResizeInterfaceListColumns();
+        };
 
         _detailPanel = new InterfaceDetailPanel();
         _splitContainer.Panel2.Controls.Add(_detailPanel);
@@ -182,6 +186,7 @@ public sealed class InterfacePopupForm : Form
             BeginInvoke(() =>
             {
                 ConfigureSplitterLayout();
+                UpdateSparklineHeight();
                 ResizeInterfaceListColumns();
             });
             _services.PublicIp.RefreshAsync();
@@ -314,6 +319,18 @@ public sealed class InterfacePopupForm : Form
 
         _splitContainer.Panel1MinSize = panel1Min;
         _splitContainer.Panel2MinSize = panel2Min;
+    }
+
+    private void UpdateSparklineHeight()
+    {
+        var panelHeight = _splitContainer.Panel1.ClientSize.Height;
+        if (panelHeight <= 0)
+        {
+            return;
+        }
+
+        // The throughput chart fills roughly a quarter of the left pane and scales with it.
+        _sparkline.Height = Math.Clamp(panelHeight / 4, 96, Math.Max(96, panelHeight - 120));
     }
 
     private void ResizeInterfaceListColumns()

@@ -52,12 +52,17 @@ public sealed class ThroughputSparklineControl : Control
             graphics.DrawLine(separator, 0, 0, width, 0);
         }
 
-        // Header: title (left) + current value (right).
+        const int pad = 10;
+        const int headerHeight = 20;
+        const int valueWidth = 110;
+
+        // Header: title (left, width-constrained so it can't run under the value or graph)
+        // and current value (right).
         TextRenderer.DrawText(
             graphics,
             _title,
             AppTheme.FontCaption,
-            new Rectangle(10, 8, width - 20, 16),
+            new Rectangle(pad, 6, Math.Max(40, width - (pad * 2) - valueWidth), headerHeight),
             AppTheme.TextMuted,
             TextFormatFlags.Left | TextFormatFlags.WordEllipsis);
 
@@ -65,16 +70,21 @@ public sealed class ThroughputSparklineControl : Control
             graphics,
             FormatHelper.FormatThroughput(_currentBps),
             AppTheme.FontCaption,
-            new Rectangle(10, 8, width - 20, 16),
+            new Rectangle(width - pad - valueWidth, 6, valueWidth, headerHeight),
             AppTheme.Accent,
             TextFormatFlags.Right);
 
-        var graphTop = 30;
-        var graphBottom = height - 22;
-        var graphLeft = 10;
-        var graphRight = width - 10;
+        var graphTop = headerHeight + 12;
+        var graphBottom = height - 20;
+        var graphLeft = pad;
+        var graphRight = width - pad;
         var graphHeight = graphBottom - graphTop;
         var graphWidth = graphRight - graphLeft;
+
+        if (graphHeight < 24 || graphWidth < 24)
+        {
+            return;
+        }
 
         var graphRect = new Rectangle(graphLeft, graphTop, graphWidth, graphHeight);
         using (var border = new Pen(AppTheme.Border))
