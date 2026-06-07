@@ -147,6 +147,7 @@ public sealed class InterfaceDetailPanel : Panel
                 info.ConnectedDevice.IpAddress,
                 info.ConnectedDevice.Hostname,
                 info.ConnectedDevice.MacAddress,
+                info.ConnectedDevice.Vendor,
                 info.ConnectedDevice.ExtraInfo);
 
         var subnetSignature = info.Subnet is null
@@ -264,6 +265,11 @@ public sealed class InterfaceDetailPanel : Panel
                 if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.MacAddress))
                 {
                     AddDetailRow("MAC", _info.ConnectedDevice.MacAddress, ref y, contentWidth);
+                }
+
+                if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.Vendor))
+                {
+                    AddDetailRow("Vendor", _info.ConnectedDevice.Vendor, ref y, contentWidth);
                 }
 
                 if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.ExtraInfo))
@@ -480,6 +486,10 @@ public sealed class InterfaceDetailPanel : Panel
             if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.MacAddress))
             {
                 lines.Add($"Device MAC: {_info.ConnectedDevice.MacAddress}");
+            }
+            if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.Vendor))
+            {
+                lines.Add($"Device vendor: {_info.ConnectedDevice.Vendor}");
             }
             if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.ExtraInfo))
             {

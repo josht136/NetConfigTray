@@ -6,5 +6,6 @@ public sealed class ConnectedDeviceInfo
     public string? IpAddress { get; init; }
     public string? Hostname { get; init; }
     public string? MacAddress { get; init; }
+    public string? Vendor { get; init; }
     public string? ExtraInfo { get; init; }
 }
