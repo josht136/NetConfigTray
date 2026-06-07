@@ -117,6 +117,7 @@ public sealed class InterfacePopupForm : Form
 
         _detailPanel = new InterfaceDetailPanel();
         _splitContainer.Panel2.Controls.Add(_detailPanel);
+        _splitContainer.Panel2.Padding = new Padding(0, 6, 0, 0);
 
         var statusPanel = new Panel
         {

@@ -19,7 +19,7 @@ public sealed class InterfaceDetailPanel : Panel
         BackColor = AppTheme.AppBackground;
         ForeColor = AppTheme.TextPrimary;
         AutoScroll = true;
-        Padding = new Padding(32, 28, 32, 28);
+        Padding = new Padding(32, 36, 32, 28);
         DoubleBuffered = true;
         SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
 
@@ -28,12 +28,30 @@ public sealed class InterfaceDetailPanel : Panel
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             BackColor = AppTheme.AppBackground,
-            Location = new Point(0, 0),
+            Location = new Point(Padding.Left, Padding.Top),
             MinimumSize = new Size(280, 0)
         };
 
         Controls.Add(_contentPanel);
-        Resize += (_, _) => _contentPanel.Width = Math.Max(280, ClientSize.Width - Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 8);
+        Resize += (_, _) => LayoutContentPanel();
+        Layout += (_, _) => LayoutContentPanel();
+    }
+
+    private int GetContentWidth()
+    {
+        var scrollBar = VerticalScroll.Visible ? SystemInformation.VerticalScrollBarWidth : 0;
+        return Math.Max(280, ClientSize.Width - Padding.Horizontal - scrollBar);
+    }
+
+    private void LayoutContentPanel()
+    {
+        _contentPanel.Location = new Point(Padding.Left, Padding.Top);
+        _contentPanel.Width = GetContentWidth();
+    }
+
+    private void ResetScrollPosition()
+    {
+        AutoScrollPosition = new Point(0, 0);
     }
 
     public void ShowPlaceholder(string message)
@@ -56,11 +74,13 @@ public sealed class InterfaceDetailPanel : Panel
                 Location = new Point(0, 0),
                 BackColor = Color.Transparent
             });
-            _contentPanel.Width = Math.Max(240, ClientSize.Width - Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
+            _contentPanel.Width = GetContentWidth();
         }
         finally
         {
             _contentPanel.ResumeLayout(true);
+            LayoutContentPanel();
+            ResetScrollPosition();
         }
     }
 
@@ -174,8 +194,9 @@ public sealed class InterfaceDetailPanel : Panel
             _contentPanel.Controls.Clear();
             _sparkline = null;
 
-            var y = 0;
-            var contentWidth = Math.Max(280, _contentPanel.Width);
+            LayoutContentPanel();
+            var y = 6;
+            var contentWidth = GetContentWidth();
 
             AddHeader(_info.Name, _info.IsPrimary, ref y, contentWidth);
             AddBadge(_info.ConfigurationLabel, _info.ConfigurationType, ref y, contentWidth);
@@ -269,6 +290,8 @@ public sealed class InterfaceDetailPanel : Panel
         finally
         {
             _contentPanel.ResumeLayout(true);
+            LayoutContentPanel();
+            ResetScrollPosition();
         }
     }
 
@@ -281,11 +304,11 @@ public sealed class InterfaceDetailPanel : Panel
             ForeColor = AppTheme.TextPrimary,
             AutoSize = true,
             Location = new Point(0, y),
-            MaximumSize = new Size(width - 8, 0),
+            MaximumSize = new Size(Math.Max(200, width), 0),
             BackColor = Color.Transparent
         };
         _contentPanel.Controls.Add(title);
-        y += title.Height + 8;
+        y += title.GetPreferredSize(new Size(Math.Max(200, width), 0)).Height + 10;
     }
 
     private void AddBadge(string text, IpConfigurationType type, ref int y, int width)
