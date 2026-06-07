@@ -5,3 +5,7 @@ obj/
 .vs/
 publish/
 *.pubxml.user
+
+# Installer build output and bundled redistributables
+installer/Output/
+installer/redist/*.exe
