@@ -4,13 +4,18 @@ namespace NetConfigTray.Forms;
 
 public sealed class ThroughputSparklineControl : Control
 {
-    private IReadOnlyList<long> _samples = Array.Empty<long>();
-    private long _currentBps;
-    private string _title = "DOWNLOAD THROUGHPUT";
+    private IReadOnlyList<long> _downloadSamples = Array.Empty<long>();
+    private IReadOnlyList<long> _uploadSamples = Array.Empty<long>();
+    private long _downloadBps;
+    private long _uploadBps;
+    private string _title = "THROUGHPUT";
+
+    private static Color DownloadColor => AppTheme.Cyan;
+    private static Color UploadColor => AppTheme.Yellow;
 
     public ThroughputSparklineControl()
     {
-        Height = 104;
+        Height = 120;
         Width = 280;
         BackColor = AppTheme.Surface;
         DoubleBuffered = true;
@@ -22,17 +27,16 @@ public sealed class ThroughputSparklineControl : Control
         Invalidate();
     }
 
-    public void SetSamples(IReadOnlyList<long> samples)
+    public void Update(
+        IReadOnlyList<long> downloadSamples,
+        long downloadBps,
+        IReadOnlyList<long> uploadSamples,
+        long uploadBps)
     {
-        _samples = samples;
-        _currentBps = samples.Count > 0 ? samples[^1] : 0;
-        Invalidate();
-    }
-
-    public void Update(IReadOnlyList<long> samples, long currentBps)
-    {
-        _samples = samples;
-        _currentBps = currentBps;
+        _downloadSamples = downloadSamples;
+        _uploadSamples = uploadSamples;
+        _downloadBps = downloadBps;
+        _uploadBps = uploadBps;
         Invalidate();
     }
 
@@ -54,24 +58,31 @@ public sealed class ThroughputSparklineControl : Control
 
         const int pad = 10;
         const int headerHeight = 20;
-        const int valueWidth = 110;
+        const int valueWidth = 95;
 
-        // Header: title (left, width-constrained so it can't run under the value or graph)
-        // and current value (right).
+        // Header: title (left, width-constrained) + current download/upload (right).
         TextRenderer.DrawText(
             graphics,
             _title,
             AppTheme.FontCaption,
-            new Rectangle(pad, 6, Math.Max(40, width - (pad * 2) - valueWidth), headerHeight),
+            new Rectangle(pad, 6, Math.Max(40, width - (pad * 2) - (valueWidth * 2)), headerHeight),
             AppTheme.TextMuted,
             TextFormatFlags.Left | TextFormatFlags.WordEllipsis);
 
         TextRenderer.DrawText(
             graphics,
-            FormatHelper.FormatThroughput(_currentBps),
+            $"↓ {FormatHelper.FormatThroughput(_downloadBps)}",
+            AppTheme.FontCaption,
+            new Rectangle(width - pad - (valueWidth * 2), 6, valueWidth, headerHeight),
+            DownloadColor,
+            TextFormatFlags.Right);
+
+        TextRenderer.DrawText(
+            graphics,
+            $"↑ {FormatHelper.FormatThroughput(_uploadBps)}",
             AppTheme.FontCaption,
             new Rectangle(width - pad - valueWidth, 6, valueWidth, headerHeight),
-            AppTheme.Accent,
+            UploadColor,
             TextFormatFlags.Right);
 
         var graphTop = headerHeight + 12;
@@ -92,9 +103,10 @@ public sealed class ThroughputSparklineControl : Control
             graphics.DrawRectangle(border, graphRect);
         }
 
-        var peak = _samples.Count > 0 ? Math.Max(_samples.Max(), 0) : 0;
+        var downloadPeak = _downloadSamples.Count > 0 ? _downloadSamples.Max() : 0;
+        var uploadPeak = _uploadSamples.Count > 0 ? _uploadSamples.Max() : 0;
+        var peak = Math.Max(downloadPeak, uploadPeak);
 
-        // Peak label (top-left inside graph) and baseline 0 (bottom-left).
         TextRenderer.DrawText(
             graphics,
             $"peak {FormatHelper.FormatThroughput(peak)}",
@@ -111,7 +123,7 @@ public sealed class ThroughputSparklineControl : Control
             AppTheme.TextMuted,
             TextFormatFlags.Left);
 
-        if (_samples.Count < 2)
+        if (_downloadSamples.Count < 2 && _uploadSamples.Count < 2)
         {
             TextRenderer.DrawText(
                 graphics,
@@ -126,24 +138,48 @@ public sealed class ThroughputSparklineControl : Control
         var max = Math.Max(peak, 1);
         var plotTop = graphTop + 16;
         var plotHeight = graphBottom - plotTop - 2;
-        var step = graphWidth / (float)(_samples.Count - 1);
 
-        var points = new PointF[_samples.Count];
-        for (var i = 0; i < _samples.Count; i++)
+        DrawSeries(graphics, _downloadSamples, max, graphLeft, graphWidth, plotTop, plotHeight, graphBottom, DownloadColor, fill: true);
+        DrawSeries(graphics, _uploadSamples, max, graphLeft, graphWidth, plotTop, plotHeight, graphBottom, UploadColor, fill: false);
+    }
+
+    private static void DrawSeries(
+        Graphics graphics,
+        IReadOnlyList<long> samples,
+        long max,
+        int graphLeft,
+        int graphWidth,
+        int plotTop,
+        int plotHeight,
+        int graphBottom,
+        Color color,
+        bool fill)
+    {
+        if (samples.Count < 2)
+        {
+            return;
+        }
+
+        var step = graphWidth / (float)(samples.Count - 1);
+        var points = new PointF[samples.Count];
+        for (var i = 0; i < samples.Count; i++)
         {
             var x = graphLeft + step * i;
-            var y = plotTop + plotHeight - (_samples[i] / (float)max * plotHeight);
+            var y = plotTop + plotHeight - (samples[i] / (float)max * plotHeight);
             points[i] = new PointF(x, y);
         }
 
-        using var fillBrush = new SolidBrush(Color.FromArgb(36, AppTheme.Cyan.R, AppTheme.Cyan.G, AppTheme.Cyan.B));
-        var fillPoints = new PointF[points.Length + 2];
-        Array.Copy(points, fillPoints, points.Length);
-        fillPoints[^2] = new PointF(points[^1].X, graphBottom - 1);
-        fillPoints[^1] = new PointF(points[0].X, graphBottom - 1);
-        graphics.FillPolygon(fillBrush, fillPoints);
+        if (fill)
+        {
+            using var fillBrush = new SolidBrush(Color.FromArgb(36, color.R, color.G, color.B));
+            var fillPoints = new PointF[points.Length + 2];
+            Array.Copy(points, fillPoints, points.Length);
+            fillPoints[^2] = new PointF(points[^1].X, graphBottom - 1);
+            fillPoints[^1] = new PointF(points[0].X, graphBottom - 1);
+            graphics.FillPolygon(fillBrush, fillPoints);
+        }
 
-        using var linePen = new Pen(AppTheme.Cyan, 2f);
+        using var linePen = new Pen(color, 2f);
         graphics.DrawLines(linePen, points);
     }
 }

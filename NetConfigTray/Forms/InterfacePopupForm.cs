@@ -681,10 +681,13 @@ public sealed class InterfacePopupForm : Form
                 info.BytesSent);
 
             _services.ThroughputHistory.AddSample(info.Id, downloadBps, uploadBps);
-            var history = _services.ThroughputHistory.GetDownloadHistory(info.Id);
             _detailPanel.Bind(info, downloadBps, uploadBps);
-            _sparkline.SetTitle($"{info.Name} · DOWNLOAD");
-            _sparkline.Update(history, downloadBps);
+            _sparkline.SetTitle($"{info.Name} · THROUGHPUT");
+            _sparkline.Update(
+                _services.ThroughputHistory.GetDownloadHistory(info.Id),
+                downloadBps,
+                _services.ThroughputHistory.GetUploadHistory(info.Id),
+                uploadBps);
         }
         catch (Exception ex)
         {
@@ -864,7 +867,11 @@ public sealed class InterfacePopupForm : Form
 
         _services.ThroughputHistory.AddSample(_selectedInterfaceId, downloadBps, uploadBps);
         _detailPanel.UpdateThroughput(downloadBps, uploadBps);
-        _sparkline.Update(_services.ThroughputHistory.GetDownloadHistory(_selectedInterfaceId), downloadBps);
+        _sparkline.Update(
+            _services.ThroughputHistory.GetDownloadHistory(_selectedInterfaceId),
+            downloadBps,
+            _services.ThroughputHistory.GetUploadHistory(_selectedInterfaceId),
+            uploadBps);
 
         if (_interfacesById.TryGetValue(_selectedInterfaceId, out var refreshed))
         {
