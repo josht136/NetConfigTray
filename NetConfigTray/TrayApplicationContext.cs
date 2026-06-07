@@ -59,7 +59,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
 
         _notifyIcon.MouseClick += OnNotifyIconMouseClick;
-        _snapshotService.SnapshotUpdated += (_, _) => UpdateTrayFromSnapshot();
+        _snapshotService.SnapshotUpdated += UpdateTrayFromSnapshot;
 
         _trayRefreshTimer = new System.Windows.Forms.Timer { Interval = 5000 };
         _trayRefreshTimer.Tick += (_, _) =>
