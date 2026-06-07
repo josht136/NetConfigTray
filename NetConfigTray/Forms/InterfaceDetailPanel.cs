@@ -5,7 +5,10 @@ namespace NetConfigTray.Forms;
 
 public sealed class InterfaceDetailPanel : Panel
 {
-    private readonly Panel _contentPanel;
+    private const int HorizontalInset = 32;
+    private const int TopInset = 20;
+    private const int BottomInset = 36;
+
     private NetworkInterfaceInfo? _info;
     private long _downloadBps;
     private long _uploadBps;
@@ -19,39 +22,34 @@ public sealed class InterfaceDetailPanel : Panel
         BackColor = AppTheme.AppBackground;
         ForeColor = AppTheme.TextPrimary;
         AutoScroll = true;
-        Padding = new Padding(32, 36, 32, 28);
+        Padding = Padding.Empty;
         DoubleBuffered = true;
         SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
-
-        _contentPanel = new Panel
-        {
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = AppTheme.AppBackground,
-            Location = new Point(Padding.Left, Padding.Top),
-            MinimumSize = new Size(280, 0)
-        };
-
-        Controls.Add(_contentPanel);
-        Resize += (_, _) => LayoutContentPanel();
-        Layout += (_, _) => LayoutContentPanel();
     }
+
+    private int ContentLeft => HorizontalInset;
 
     private int GetContentWidth()
     {
-        var scrollBar = VerticalScroll.Visible ? SystemInformation.VerticalScrollBarWidth : 0;
-        return Math.Max(280, ClientSize.Width - Padding.Horizontal - scrollBar);
+        // Content is long enough to always scroll, so always reserve the scrollbar
+        // width to avoid horizontal overflow and width jitter between rebuilds.
+        var scrollBar = SystemInformation.VerticalScrollBarWidth;
+        return Math.Max(280, ClientSize.Width - (HorizontalInset * 2) - scrollBar);
     }
 
-    private void LayoutContentPanel()
+    private void UpdateScrollExtent(int contentBottom)
     {
-        _contentPanel.Location = new Point(Padding.Left, Padding.Top);
-        _contentPanel.Width = GetContentWidth();
+        AutoScrollMinSize = new Size(0, contentBottom + BottomInset);
     }
 
     private void ResetScrollPosition()
     {
-        AutoScrollPosition = new Point(0, 0);
+        if (!IsHandleCreated)
+        {
+            return;
+        }
+
+        BeginInvoke(() => AutoScrollPosition = new Point(0, 0));
     }
 
     public void ShowPlaceholder(string message)
@@ -60,26 +58,27 @@ public sealed class InterfaceDetailPanel : Panel
         _sparkline = null;
         _boundInterfaceId = null;
         _layoutSignature = null;
-        _contentPanel.SuspendLayout();
+
+        SuspendLayout();
         try
         {
-            _contentPanel.Controls.Clear();
-            _contentPanel.Controls.Add(new Label
+            Controls.Clear();
+            var label = new Label
             {
                 Text = message,
                 ForeColor = AppTheme.TextMuted,
                 Font = AppTheme.FontBody,
                 AutoSize = true,
-                MaximumSize = new Size(Math.Max(240, ClientSize.Width - Padding.Horizontal - 8), 0),
-                Location = new Point(0, 0),
+                MaximumSize = new Size(GetContentWidth(), 0),
+                Location = new Point(ContentLeft, TopInset),
                 BackColor = Color.Transparent
-            });
-            _contentPanel.Width = GetContentWidth();
+            };
+            Controls.Add(label);
+            UpdateScrollExtent(label.Bottom);
         }
         finally
         {
-            _contentPanel.ResumeLayout(true);
-            LayoutContentPanel();
+            ResumeLayout(true);
             ResetScrollPosition();
         }
     }
@@ -93,7 +92,7 @@ public sealed class InterfaceDetailPanel : Panel
         var layoutSignature = BuildLayoutSignature(info);
         var canUpdateInPlace = _boundInterfaceId == info.Id
             && string.Equals(_layoutSignature, layoutSignature, StringComparison.Ordinal)
-            && _contentPanel.Controls.Count > 0
+            && Controls.Count > 0
             && _info is not null;
 
         _info = info;
@@ -148,6 +147,7 @@ public sealed class InterfaceDetailPanel : Panel
                 info.ConnectedDevice.IpAddress,
                 info.ConnectedDevice.Hostname,
                 info.ConnectedDevice.MacAddress,
+                info.ConnectedDevice.Vendor,
                 info.ConnectedDevice.ExtraInfo);
 
         var subnetSignature = info.Subnet is null
@@ -188,19 +188,18 @@ public sealed class InterfaceDetailPanel : Panel
             return;
         }
 
-        _contentPanel.SuspendLayout();
+        SuspendLayout();
         try
         {
-            _contentPanel.Controls.Clear();
+            Controls.Clear();
             _sparkline = null;
 
-            LayoutContentPanel();
-            var y = 6;
+            var y = TopInset;
             var contentWidth = GetContentWidth();
 
             AddHeader(_info.Name, _info.IsPrimary, ref y, contentWidth);
-            AddBadge(_info.ConfigurationLabel, _info.ConfigurationType, ref y, contentWidth);
-            y += 8;
+            AddBadge(_info.ConfigurationLabel, _info.ConfigurationType, ref y);
+            y += 10;
             AddDetailRow("IP address", _info.IPv4Address, ref y, contentWidth);
             AddDetailRow("CIDR", _info.Cidr, ref y, contentWidth);
             AddDetailRow("MAC address", _info.MacAddress, ref y, contentWidth);
@@ -241,11 +240,11 @@ public sealed class InterfaceDetailPanel : Panel
             AddSectionHeader("Throughput history", ref y, contentWidth);
             _sparkline = new ThroughputSparklineControl
             {
-                Width = contentWidth - 8,
-                Location = new Point(0, y)
+                Width = contentWidth,
+                Location = new Point(ContentLeft, y)
             };
             _sparkline.SetSamples(downloadHistory);
-            _contentPanel.Controls.Add(_sparkline);
+            Controls.Add(_sparkline);
             y += _sparkline.Height + 12;
 
             if (_info.ConnectedDevice is not null)
@@ -268,6 +267,11 @@ public sealed class InterfaceDetailPanel : Panel
                     AddDetailRow("MAC", _info.ConnectedDevice.MacAddress, ref y, contentWidth);
                 }
 
+                if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.Vendor))
+                {
+                    AddDetailRow("Vendor", _info.ConnectedDevice.Vendor, ref y, contentWidth);
+                }
+
                 if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.ExtraInfo))
                 {
                     AddDetailRow("Details", _info.ConnectedDevice.ExtraInfo, ref y, contentWidth);
@@ -277,20 +281,18 @@ public sealed class InterfaceDetailPanel : Panel
             var copyAllButton = new Button
             {
                 Text = "Copy all details",
-                AutoSize = true,
-                Location = new Point(0, y + 4)
+                Size = new Size(140, 32),
+                Location = new Point(ContentLeft, y + 8)
             };
             AppTheme.StyleAccentButton(copyAllButton);
             copyAllButton.Click += (_, _) => ClipboardHelper.CopyText(BuildCopyText());
-            _contentPanel.Controls.Add(copyAllButton);
+            Controls.Add(copyAllButton);
 
-            _contentPanel.Height = y + copyAllButton.Height + 16;
-            _contentPanel.Width = contentWidth;
+            UpdateScrollExtent(copyAllButton.Bottom);
         }
         finally
         {
-            _contentPanel.ResumeLayout(true);
-            LayoutContentPanel();
+            ResumeLayout(true);
             ResetScrollPosition();
         }
     }
@@ -303,15 +305,15 @@ public sealed class InterfaceDetailPanel : Panel
             Font = AppTheme.FontHeader,
             ForeColor = AppTheme.TextPrimary,
             AutoSize = true,
-            Location = new Point(0, y),
-            MaximumSize = new Size(Math.Max(200, width), 0),
+            Location = new Point(ContentLeft, y),
+            MaximumSize = new Size(width, 0),
             BackColor = Color.Transparent
         };
-        _contentPanel.Controls.Add(title);
-        y += title.GetPreferredSize(new Size(Math.Max(200, width), 0)).Height + 10;
+        Controls.Add(title);
+        y += title.GetPreferredSize(new Size(width, 0)).Height + 10;
     }
 
-    private void AddBadge(string text, IpConfigurationType type, ref int y, int width)
+    private void AddBadge(string text, IpConfigurationType type, ref int y)
     {
         var badge = new Label
         {
@@ -323,10 +325,10 @@ public sealed class InterfaceDetailPanel : Panel
             AutoSize = true,
             Padding = new Padding(10, 5, 10, 5),
             TextAlign = ContentAlignment.MiddleCenter,
-            Location = new Point(0, y)
+            Location = new Point(ContentLeft, y)
         };
-        _contentPanel.Controls.Add(badge);
-        y += badge.Height + 14;
+        Controls.Add(badge);
+        y += badge.GetPreferredSize(Size.Empty).Height + 12;
     }
 
     private void AddSectionHeader(string text, ref int y, int width)
@@ -335,10 +337,10 @@ public sealed class InterfaceDetailPanel : Panel
         var rule = new Panel
         {
             BackColor = AppTheme.BorderSubtle,
-            Location = new Point(0, y),
+            Location = new Point(ContentLeft, y),
             Size = new Size(width, 1)
         };
-        _contentPanel.Controls.Add(rule);
+        Controls.Add(rule);
         y += 10;
 
         var label = new Label
@@ -347,12 +349,12 @@ public sealed class InterfaceDetailPanel : Panel
             Font = AppTheme.FontSection,
             ForeColor = AppTheme.Accent,
             AutoSize = true,
-            Location = new Point(0, y),
-            MaximumSize = new Size(width - 8, 0),
+            Location = new Point(ContentLeft, y),
+            MaximumSize = new Size(width, 0),
             BackColor = Color.Transparent
         };
-        _contentPanel.Controls.Add(label);
-        y += label.Height + 8;
+        Controls.Add(label);
+        y += label.GetPreferredSize(new Size(width, 0)).Height + 8;
     }
 
     private void AddDetailRow(string labelText, string value, ref int y, int width, string? valueKey = null)
@@ -360,9 +362,8 @@ public sealed class InterfaceDetailPanel : Panel
         var rowPanel = new Panel
         {
             BackColor = AppTheme.Surface,
-            Location = new Point(0, y),
-            Size = new Size(width, 58),
-            Padding = new Padding(14, 10, 14, 10)
+            Location = new Point(ContentLeft, y),
+            Size = new Size(width, 58)
         };
 
         var label = new Label
@@ -400,14 +401,14 @@ public sealed class InterfaceDetailPanel : Panel
         rowPanel.Controls.Add(label);
         rowPanel.Controls.Add(valueLabel);
         rowPanel.Controls.Add(copyButton);
-        _contentPanel.Controls.Add(rowPanel);
+        Controls.Add(rowPanel);
 
         y += rowPanel.Height + 8;
     }
 
     private void UpdateValue(string labelText, string value)
     {
-        foreach (Control control in _contentPanel.Controls)
+        foreach (Control control in Controls)
         {
             if (control is not Panel rowPanel)
             {
@@ -485,6 +486,10 @@ public sealed class InterfaceDetailPanel : Panel
             if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.MacAddress))
             {
                 lines.Add($"Device MAC: {_info.ConnectedDevice.MacAddress}");
+            }
+            if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.Vendor))
+            {
+                lines.Add($"Device vendor: {_info.ConnectedDevice.Vendor}");
             }
             if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.ExtraInfo))
             {

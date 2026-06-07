@@ -105,6 +105,9 @@ public sealed class InterfacePopupForm : Form
             OwnerDraw = true
         };
         AppTheme.StyleListView(_interfaceList);
+        // Force a taller row height so the larger primary-interface font and the
+        // DHCP/Static type text are not vertically clipped in owner-draw Details view.
+        _interfaceList.SmallImageList = new ImageList { ImageSize = new Size(1, 34) };
         _interfaceList.Columns.Add("INTERFACE", 220);
         _interfaceList.Columns.Add("TYPE", 64);
         _interfaceList.DrawColumnHeader += OnInterfaceListDrawColumnHeader;
@@ -117,7 +120,6 @@ public sealed class InterfacePopupForm : Form
 
         _detailPanel = new InterfaceDetailPanel();
         _splitContainer.Panel2.Controls.Add(_detailPanel);
-        _splitContainer.Panel2.Padding = new Padding(0, 6, 0, 0);
 
         var statusPanel = new Panel
         {
@@ -141,10 +143,13 @@ public sealed class InterfacePopupForm : Form
         AppTheme.StyleStatusLabel(_statusLabel);
         statusPanel.Controls.Add(_statusLabel);
 
+        // Docked controls are laid out front-to-back in z-order, so the DockStyle.Fill
+        // control must be added first (sent to back). Otherwise it fills the whole client
+        // area and the Top/Bottom panels paint over its edges.
         SuspendLayout();
-        Controls.Add(headerPanel);
-        Controls.Add(statusPanel);
         Controls.Add(_splitContainer);
+        Controls.Add(statusPanel);
+        Controls.Add(headerPanel);
         ResumeLayout(false);
 
         HandleCreated += (_, _) => DarkModeHelper.TryEnableDarkTitleBar(this);

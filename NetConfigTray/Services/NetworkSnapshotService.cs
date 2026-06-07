@@ -219,6 +219,7 @@ public sealed class NetworkSnapshotService
             && left.IpAddress == right.IpAddress
             && left.Hostname == right.Hostname
             && left.MacAddress == right.MacAddress
+            && left.Vendor == right.Vendor
             && left.ExtraInfo == right.ExtraInfo;
     }
 

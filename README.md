@@ -71,3 +71,7 @@ The executable is `publish/win-x64/NetConfigTray.exe`.
 ## CI
 
 GitHub Actions builds a Windows release artifact on every push to `main`/`master`. Download `NetConfigTray-win-x64` from the Actions tab after a successful run.
+
+## Roadmap / future ideas
+
+- **LLDP/CDP discovery of the directly-connected device.** The "Connected device" section currently shows the next-hop device on the wire (its MAC is what ARP resolves for the gateway). An unmanaged switch between the PC and the router is Layer-2 transparent and isn't separately discoverable. To identify a **managed switch or modem/ONT** that sits directly on the link (with its own management IP), the app would need to read **LLDP** (or Cisco **CDP**) neighbor advertisements. This typically requires capturing link-layer frames (e.g. via a packet-capture library or a Windows LLDP agent), often needs administrator privileges, and only works if the connected device actively emits LLDP/CDP. Would surface the switch/modem's chassis ID, port ID, system name, and management IP.

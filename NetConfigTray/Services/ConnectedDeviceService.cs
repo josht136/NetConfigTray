@@ -50,7 +50,8 @@ public sealed class ConnectedDeviceService
 
         if (_gatewayCache.TryGetValue(gateway, out var cached) &&
             DateTime.UtcNow - cached.CachedAt < GatewayCacheLifetime &&
-            (!resolveHostname || cached.Info.Hostname is not null))
+            (!resolveHostname || cached.Info.Hostname is not null) &&
+            (cached.Info.MacAddress is null || cached.Info.Vendor is not null))
         {
             return cached.Info;
         }
@@ -62,17 +63,22 @@ public sealed class ConnectedDeviceService
 
         var mac = ArpHelper.ResolveMacAddress(gatewayIp);
         string? hostname = null;
+        string? vendor = null;
         if (resolveHostname)
         {
             hostname = ArpHelper.ResolveHostname(gatewayIp, TimeSpan.FromMilliseconds(750));
+            vendor = MacVendorLookup.Resolve(mac);
         }
 
         var info = new ConnectedDeviceInfo
         {
-            Role = "Upstream device (gateway)",
+            // This is the next-hop device on the wire. Any unmanaged switch between the
+            // PC and this device is Layer-2 transparent and not separately discoverable.
+            Role = "Next-hop device (on the wire)",
             IpAddress = gateway,
             Hostname = hostname,
             MacAddress = mac,
+            Vendor = vendor,
             ExtraInfo = mac is null ? "ARP lookup pending — expand or refresh" : null
         };
 
@@ -94,6 +100,7 @@ public sealed class ConnectedDeviceService
             IpAddress = gateway is { Length: > 0 } ? gateway : null,
             Hostname = wifi.Ssid,
             MacAddress = wifi.Bssid,
+            Vendor = MacVendorLookup.Resolve(wifi.Bssid),
             ExtraInfo = wifi.Signal is not null ? $"SSID: {wifi.Ssid} · Signal: {wifi.Signal}" : $"SSID: {wifi.Ssid}"
         };
     }
