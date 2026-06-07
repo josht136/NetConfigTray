@@ -105,6 +105,9 @@ public sealed class InterfacePopupForm : Form
             OwnerDraw = true
         };
         AppTheme.StyleListView(_interfaceList);
+        // Force a taller row height so the larger primary-interface font and the
+        // DHCP/Static type text are not vertically clipped in owner-draw Details view.
+        _interfaceList.SmallImageList = new ImageList { ImageSize = new Size(1, 34) };
         _interfaceList.Columns.Add("INTERFACE", 220);
         _interfaceList.Columns.Add("TYPE", 64);
         _interfaceList.DrawColumnHeader += OnInterfaceListDrawColumnHeader;
@@ -117,7 +120,6 @@ public sealed class InterfacePopupForm : Form
 
         _detailPanel = new InterfaceDetailPanel();
         _splitContainer.Panel2.Controls.Add(_detailPanel);
-        _splitContainer.Panel2.Padding = new Padding(0, 6, 0, 0);
 
         var statusPanel = new Panel
         {
