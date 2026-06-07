@@ -10,6 +10,8 @@ public sealed class InterfaceDetailPanel : Panel
     private long _downloadBps;
     private long _uploadBps;
     private ThroughputSparklineControl? _sparkline;
+    private string? _boundInterfaceId;
+    private string? _layoutSignature;
 
     public InterfaceDetailPanel()
     {
@@ -17,6 +19,8 @@ public sealed class InterfaceDetailPanel : Panel
         BackColor = Color.White;
         AutoScroll = true;
         Padding = new Padding(16, 12, 16, 12);
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
 
         _contentPanel = new Panel
         {
@@ -35,16 +39,26 @@ public sealed class InterfaceDetailPanel : Panel
     {
         _info = null;
         _sparkline = null;
-        _contentPanel.Controls.Clear();
-        _contentPanel.Controls.Add(new Label
+        _boundInterfaceId = null;
+        _layoutSignature = null;
+        _contentPanel.SuspendLayout();
+        try
         {
-            Text = message,
-            ForeColor = Color.Gray,
-            AutoSize = true,
-            MaximumSize = new Size(Math.Max(240, ClientSize.Width - Padding.Horizontal - 8), 0),
-            Location = new Point(0, 0)
-        });
-        _contentPanel.Width = Math.Max(240, ClientSize.Width - Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
+            _contentPanel.Controls.Clear();
+            _contentPanel.Controls.Add(new Label
+            {
+                Text = message,
+                ForeColor = Color.Gray,
+                AutoSize = true,
+                MaximumSize = new Size(Math.Max(240, ClientSize.Width - Padding.Horizontal - 8), 0),
+                Location = new Point(0, 0)
+            });
+            _contentPanel.Width = Math.Max(240, ClientSize.Width - Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
+        }
+        finally
+        {
+            _contentPanel.ResumeLayout(true);
+        }
     }
 
     public void Bind(
@@ -53,9 +67,24 @@ public sealed class InterfaceDetailPanel : Panel
         long uploadBps,
         IReadOnlyList<long> downloadHistory)
     {
+        var layoutSignature = BuildLayoutSignature(info);
+        var canUpdateInPlace = _boundInterfaceId == info.Id
+            && string.Equals(_layoutSignature, layoutSignature, StringComparison.Ordinal)
+            && _contentPanel.Controls.Count > 0
+            && _info is not null;
+
         _info = info;
         _downloadBps = downloadBps;
         _uploadBps = uploadBps;
+        _boundInterfaceId = info.Id;
+        _layoutSignature = layoutSignature;
+
+        if (canUpdateInPlace)
+        {
+            ApplyLiveValues(downloadHistory);
+            return;
+        }
+
         Rebuild(downloadHistory);
     }
 
@@ -63,9 +92,70 @@ public sealed class InterfaceDetailPanel : Panel
     {
         _downloadBps = downloadBps;
         _uploadBps = uploadBps;
+        ApplyLiveValues(downloadHistory);
+    }
+
+    public void UpdateLiveFields(NetworkInterfaceInfo info)
+    {
+        _info = info;
+        UpdateValue("Connection uptime", info.ConnectionUptime ?? "Unknown");
+        UpdateValue("Gateway ping", info.GatewayPing ?? "—");
+    }
+
+    private void ApplyLiveValues(IReadOnlyList<long> downloadHistory)
+    {
+        if (_info is null)
+        {
+            return;
+        }
+
         UpdateValue("Download", FormatHelper.FormatThroughput(_downloadBps));
         UpdateValue("Upload", FormatHelper.FormatThroughput(_uploadBps));
+        UpdateValue("Connection uptime", _info.ConnectionUptime ?? "Unknown");
+        UpdateValue("Gateway ping", _info.GatewayPing ?? "—");
         _sparkline?.SetSamples(downloadHistory);
+    }
+
+    private static string BuildLayoutSignature(NetworkInterfaceInfo info)
+    {
+        var deviceSignature = info.ConnectedDevice is null
+            ? string.Empty
+            : string.Join("|",
+                info.ConnectedDevice.Role,
+                info.ConnectedDevice.IpAddress,
+                info.ConnectedDevice.Hostname,
+                info.ConnectedDevice.MacAddress,
+                info.ConnectedDevice.ExtraInfo);
+
+        var subnetSignature = info.Subnet is null
+            ? string.Empty
+            : string.Join("|",
+                info.Subnet.NetworkAddress,
+                info.Subnet.BroadcastAddress,
+                info.Subnet.FirstHost,
+                info.Subnet.LastHost,
+                info.Subnet.UsableHosts);
+
+        return string.Join("|",
+            info.Id,
+            info.Name,
+            info.IsPrimary,
+            info.ConfigurationType,
+            info.IPv4Address,
+            info.Cidr,
+            info.MacAddress,
+            info.LinkSpeedBps,
+            info.Gateway,
+            info.DnsServers,
+            info.RouteMetric,
+            info.DhcpServer,
+            info.DhcpLeaseObtained,
+            info.DhcpLeaseExpires,
+            info.WifiChannel,
+            info.WifiBand,
+            info.WifiRadioType,
+            subnetSignature,
+            deviceSignature);
     }
 
     private void Rebuild(IReadOnlyList<long> downloadHistory)
@@ -75,99 +165,107 @@ public sealed class InterfaceDetailPanel : Panel
             return;
         }
 
-        _contentPanel.Controls.Clear();
-        _sparkline = null;
-
-        var y = 0;
-        var contentWidth = Math.Max(280, _contentPanel.Width);
-
-        AddHeader(_info.Name, _info.IsPrimary, ref y, contentWidth);
-        AddBadge(_info.ConfigurationLabel, _info.ConfigurationType, ref y, contentWidth);
-        AddDetailRow("IP address", _info.IPv4Address, ref y, contentWidth);
-        AddDetailRow("CIDR", _info.Cidr, ref y, contentWidth);
-        AddDetailRow("MAC address", _info.MacAddress, ref y, contentWidth);
-        AddDetailRow("Link speed", FormatHelper.FormatLinkSpeed(_info.LinkSpeedBps), ref y, contentWidth);
-        AddDetailRow("Download", FormatHelper.FormatThroughput(_downloadBps), ref y, contentWidth, "Download");
-        AddDetailRow("Upload", FormatHelper.FormatThroughput(_uploadBps), ref y, contentWidth, "Upload");
-        AddDetailRow("Connection uptime", _info.ConnectionUptime ?? "Unknown", ref y, contentWidth);
-        AddDetailRow("Gateway", string.IsNullOrWhiteSpace(_info.Gateway) ? "None" : _info.Gateway, ref y, contentWidth);
-        AddDetailRow("Gateway ping", _info.GatewayPing ?? "—", ref y, contentWidth);
-        AddDetailRow("Route metric", _info.RouteMetric?.ToString() ?? "Unknown", ref y, contentWidth);
-        AddDetailRow("DNS servers", _info.DnsServers, ref y, contentWidth);
-
-        if (_info.Subnet is not null)
+        _contentPanel.SuspendLayout();
+        try
         {
-            AddSectionHeader("Subnet", ref y, contentWidth);
-            AddDetailRow("Network", _info.Subnet.NetworkAddress, ref y, contentWidth);
-            AddDetailRow("Broadcast", _info.Subnet.BroadcastAddress, ref y, contentWidth);
-            AddDetailRow("Host range", $"{_info.Subnet.FirstHost} – {_info.Subnet.LastHost}", ref y, contentWidth);
-            AddDetailRow("Usable hosts", _info.Subnet.UsableHosts.ToString(), ref y, contentWidth);
-        }
+            _contentPanel.Controls.Clear();
+            _sparkline = null;
 
-        if (_info.ConfigurationType == IpConfigurationType.Dhcp)
-        {
-            AddSectionHeader("DHCP lease", ref y, contentWidth);
-            AddDetailRow("DHCP server", _info.DhcpServer ?? "Unknown", ref y, contentWidth);
-            AddDetailRow("Lease obtained", _info.DhcpLeaseObtained ?? "Unknown", ref y, contentWidth);
-            AddDetailRow("Lease expires", _info.DhcpLeaseExpires ?? "Unknown", ref y, contentWidth);
-        }
+            var y = 0;
+            var contentWidth = Math.Max(280, _contentPanel.Width);
 
-        if (!string.IsNullOrWhiteSpace(_info.WifiChannel))
-        {
-            AddSectionHeader("Wi-Fi", ref y, contentWidth);
-            AddDetailRow("Channel", _info.WifiChannel!, ref y, contentWidth);
-            AddDetailRow("Band", _info.WifiBand ?? "Unknown", ref y, contentWidth);
-            AddDetailRow("Radio type", _info.WifiRadioType ?? "Unknown", ref y, contentWidth);
-        }
+            AddHeader(_info.Name, _info.IsPrimary, ref y, contentWidth);
+            AddBadge(_info.ConfigurationLabel, _info.ConfigurationType, ref y, contentWidth);
+            AddDetailRow("IP address", _info.IPv4Address, ref y, contentWidth);
+            AddDetailRow("CIDR", _info.Cidr, ref y, contentWidth);
+            AddDetailRow("MAC address", _info.MacAddress, ref y, contentWidth);
+            AddDetailRow("Link speed", FormatHelper.FormatLinkSpeed(_info.LinkSpeedBps), ref y, contentWidth);
+            AddDetailRow("Download", FormatHelper.FormatThroughput(_downloadBps), ref y, contentWidth, "Download");
+            AddDetailRow("Upload", FormatHelper.FormatThroughput(_uploadBps), ref y, contentWidth, "Upload");
+            AddDetailRow("Connection uptime", _info.ConnectionUptime ?? "Unknown", ref y, contentWidth);
+            AddDetailRow("Gateway", string.IsNullOrWhiteSpace(_info.Gateway) ? "None" : _info.Gateway, ref y, contentWidth);
+            AddDetailRow("Gateway ping", _info.GatewayPing ?? "—", ref y, contentWidth);
+            AddDetailRow("Route metric", _info.RouteMetric?.ToString() ?? "Unknown", ref y, contentWidth);
+            AddDetailRow("DNS servers", _info.DnsServers, ref y, contentWidth);
 
-        AddSectionHeader("Throughput history", ref y, contentWidth);
-        _sparkline = new ThroughputSparklineControl
-        {
-            Width = contentWidth - 8,
-            Location = new Point(0, y)
-        };
-        _sparkline.SetSamples(downloadHistory);
-        _contentPanel.Controls.Add(_sparkline);
-        y += _sparkline.Height + 8;
-
-        if (_info.ConnectedDevice is not null)
-        {
-            AddSectionHeader("Connected device", ref y, contentWidth);
-            AddDetailRow("Role", _info.ConnectedDevice.Role, ref y, contentWidth);
-
-            if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.IpAddress))
+            if (_info.Subnet is not null)
             {
-                AddDetailRow("IP", _info.ConnectedDevice.IpAddress, ref y, contentWidth);
+                AddSectionHeader("Subnet", ref y, contentWidth);
+                AddDetailRow("Network", _info.Subnet.NetworkAddress, ref y, contentWidth);
+                AddDetailRow("Broadcast", _info.Subnet.BroadcastAddress, ref y, contentWidth);
+                AddDetailRow("Host range", $"{_info.Subnet.FirstHost} – {_info.Subnet.LastHost}", ref y, contentWidth);
+                AddDetailRow("Usable hosts", _info.Subnet.UsableHosts.ToString(), ref y, contentWidth);
             }
 
-            if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.Hostname))
+            if (_info.ConfigurationType == IpConfigurationType.Dhcp)
             {
-                AddDetailRow("Hostname / SSID", _info.ConnectedDevice.Hostname, ref y, contentWidth);
+                AddSectionHeader("DHCP lease", ref y, contentWidth);
+                AddDetailRow("DHCP server", _info.DhcpServer ?? "Unknown", ref y, contentWidth);
+                AddDetailRow("Lease obtained", _info.DhcpLeaseObtained ?? "Unknown", ref y, contentWidth);
+                AddDetailRow("Lease expires", _info.DhcpLeaseExpires ?? "Unknown", ref y, contentWidth);
             }
 
-            if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.MacAddress))
+            if (!string.IsNullOrWhiteSpace(_info.WifiChannel))
             {
-                AddDetailRow("MAC", _info.ConnectedDevice.MacAddress, ref y, contentWidth);
+                AddSectionHeader("Wi-Fi", ref y, contentWidth);
+                AddDetailRow("Channel", _info.WifiChannel!, ref y, contentWidth);
+                AddDetailRow("Band", _info.WifiBand ?? "Unknown", ref y, contentWidth);
+                AddDetailRow("Radio type", _info.WifiRadioType ?? "Unknown", ref y, contentWidth);
             }
 
-            if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.ExtraInfo))
+            AddSectionHeader("Throughput history", ref y, contentWidth);
+            _sparkline = new ThroughputSparklineControl
             {
-                AddDetailRow("Details", _info.ConnectedDevice.ExtraInfo, ref y, contentWidth);
+                Width = contentWidth - 8,
+                Location = new Point(0, y)
+            };
+            _sparkline.SetSamples(downloadHistory);
+            _contentPanel.Controls.Add(_sparkline);
+            y += _sparkline.Height + 8;
+
+            if (_info.ConnectedDevice is not null)
+            {
+                AddSectionHeader("Connected device", ref y, contentWidth);
+                AddDetailRow("Role", _info.ConnectedDevice.Role, ref y, contentWidth);
+
+                if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.IpAddress))
+                {
+                    AddDetailRow("IP", _info.ConnectedDevice.IpAddress, ref y, contentWidth);
+                }
+
+                if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.Hostname))
+                {
+                    AddDetailRow("Hostname / SSID", _info.ConnectedDevice.Hostname, ref y, contentWidth);
+                }
+
+                if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.MacAddress))
+                {
+                    AddDetailRow("MAC", _info.ConnectedDevice.MacAddress, ref y, contentWidth);
+                }
+
+                if (!string.IsNullOrWhiteSpace(_info.ConnectedDevice.ExtraInfo))
+                {
+                    AddDetailRow("Details", _info.ConnectedDevice.ExtraInfo, ref y, contentWidth);
+                }
             }
+
+            var copyAllButton = new Button
+            {
+                Text = "Copy all details",
+                AutoSize = true,
+                FlatStyle = FlatStyle.System,
+                Location = new Point(0, y + 4)
+            };
+            copyAllButton.Click += (_, _) => ClipboardHelper.CopyText(BuildCopyText());
+            _contentPanel.Controls.Add(copyAllButton);
+
+            _contentPanel.Height = y + copyAllButton.Height + 12;
+            _contentPanel.Width = contentWidth;
         }
-
-        var copyAllButton = new Button
+        finally
         {
-            Text = "Copy all details",
-            AutoSize = true,
-            FlatStyle = FlatStyle.System,
-            Location = new Point(0, y + 4)
-        };
-        copyAllButton.Click += (_, _) => ClipboardHelper.CopyText(BuildCopyText());
-        _contentPanel.Controls.Add(copyAllButton);
-
-        _contentPanel.Height = y + copyAllButton.Height + 12;
-        _contentPanel.Width = contentWidth;
+            _contentPanel.ResumeLayout(true);
+        }
     }
 
     private void AddHeader(string name, bool isPrimary, ref int y, int width)

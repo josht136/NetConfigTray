@@ -17,6 +17,7 @@ public sealed class InterfacePopupForm : Form
     private string? _selectedInterfaceId;
     private bool _forceClose;
     private string _lastListSignature = string.Empty;
+    private string _lastDetailLayoutSignature = string.Empty;
 
     public InterfacePopupForm(AppServices services)
     {
@@ -366,7 +367,21 @@ public sealed class InterfacePopupForm : Form
 
             if (interfaces.Count > 0)
             {
-                UpdateDetailPanelForSelection();
+                var selectedId = _interfaceList.SelectedItems.Count > 0
+                    ? _interfaceList.SelectedItems[0].Tag as string
+                    : _selectedInterfaceId;
+
+                if (!string.IsNullOrWhiteSpace(selectedId) &&
+                    _interfacesById.TryGetValue(selectedId, out var selectedInfo))
+                {
+                    var detailLayoutSignature = BuildDetailLayoutSignature(selectedInfo);
+                    if (listChanged ||
+                        !string.Equals(detailLayoutSignature, _lastDetailLayoutSignature, StringComparison.Ordinal))
+                    {
+                        _lastDetailLayoutSignature = detailLayoutSignature;
+                        UpdateDetailPanelForSelection();
+                    }
+                }
             }
         }
         catch (Exception ex)
@@ -379,6 +394,38 @@ public sealed class InterfacePopupForm : Form
     private static string BuildListSignature(IReadOnlyList<NetworkInterfaceInfo> interfaces)
     {
         return string.Join("|", interfaces.Select(i => i.ChangeSignature));
+    }
+
+    private static string BuildDetailLayoutSignature(NetworkInterfaceInfo info)
+    {
+        var deviceSignature = info.ConnectedDevice is null
+            ? string.Empty
+            : string.Join("|",
+                info.ConnectedDevice.Role,
+                info.ConnectedDevice.IpAddress,
+                info.ConnectedDevice.Hostname,
+                info.ConnectedDevice.MacAddress,
+                info.ConnectedDevice.ExtraInfo);
+
+        return string.Join("|",
+            info.Id,
+            info.Name,
+            info.IsPrimary,
+            info.ConfigurationType,
+            info.IPv4Address,
+            info.Cidr,
+            info.MacAddress,
+            info.LinkSpeedBps,
+            info.Gateway,
+            info.DnsServers,
+            info.RouteMetric,
+            info.DhcpServer,
+            info.DhcpLeaseObtained,
+            info.DhcpLeaseExpires,
+            info.WifiChannel,
+            info.WifiBand,
+            info.WifiRadioType,
+            deviceSignature);
     }
 
     private void UpdateDetailPanelForSelection()
@@ -397,6 +444,7 @@ public sealed class InterfacePopupForm : Form
         }
 
         _selectedInterfaceId = selectedId;
+        _lastDetailLayoutSignature = BuildDetailLayoutSignature(info);
 
         if (info.ConnectedDevice is null)
         {
@@ -502,6 +550,20 @@ public sealed class InterfacePopupForm : Form
             counts.BytesSent);
 
         _services.ThroughputHistory.AddSample(_selectedInterfaceId, downloadBps, uploadBps);
-        _detailPanel.UpdateThroughput(downloadBps, uploadBps, _services.ThroughputHistory.GetDownloadHistory(_selectedInterfaceId));
+        _detailPanel.UpdateThroughput(
+            downloadBps,
+            uploadBps,
+            _services.ThroughputHistory.GetDownloadHistory(_selectedInterfaceId));
+
+        if (_interfacesById.TryGetValue(_selectedInterfaceId, out var refreshed))
+        {
+            refreshed = refreshed with
+            {
+                ConnectionUptime = _services.Uptime.GetUptimeText(_selectedInterfaceId, isActive: true),
+                GatewayPing = _services.GatewayPing.GetLatencyText(refreshed.Gateway)
+            };
+            _interfacesById[_selectedInterfaceId] = refreshed;
+            _detailPanel.UpdateLiveFields(refreshed);
+        }
     }
 }
