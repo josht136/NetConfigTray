@@ -58,6 +58,8 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         var contextMenu = new ContextMenuStrip();
         contextMenu.Items.Add(new ToolStripMenuItem($"Open {AppBranding.ShortName}", null, (_, _) => ShowMainWindow()));
+        contextMenu.Items.Add(BuildToolsMenu());
+        contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add(_autostartMenuItem);
         contextMenu.Items.Add(_notificationsMenuItem);
         contextMenu.Items.Add(new ToolStripSeparator());
@@ -197,6 +199,52 @@ public sealed class TrayApplicationContext : ApplicationContext
         // Bring the (hidden) host window to the foreground so the popup dismisses on focus loss.
         SetForegroundWindow(_hostForm.Handle);
         _interfaceMenu.Show(Cursor.Position);
+    }
+
+    private ToolStripMenuItem BuildToolsMenu()
+    {
+        var tools = new ToolStripMenuItem("Tools");
+        tools.DropDownItems.Add(new ToolStripMenuItem("Open Toolbox…", null, (_, _) => ShowToolbox()));
+        tools.DropDownItems.Add(new ToolStripSeparator());
+        tools.DropDownItems.Add(new ToolStripMenuItem("Console (Serial / SSH / Telnet)…", null,
+            (_, _) => OpenTool(new ConsoleTerminalForm(_services))));
+        tools.DropDownItems.Add(new ToolStripMenuItem("LLDP / CDP discovery…", null,
+            (_, _) => OpenTool(new NeighborDiscoveryForm(_services))));
+        tools.DropDownItems.Add(new ToolStripMenuItem("Latency monitor…", null,
+            (_, _) => OpenTool(new LatencyMonitorForm(_services))));
+        tools.DropDownItems.Add(new ToolStripMenuItem("Port scan…", null,
+            (_, _) => OpenTool(new PortScanForm(_services))));
+        tools.DropDownItems.Add(new ToolStripMenuItem("Throughput test (iperf3)…", null,
+            (_, _) => OpenTool(new ThroughputTestForm(_services))));
+        tools.DropDownItems.Add(new ToolStripMenuItem("Wi-Fi survey…", null,
+            (_, _) => OpenTool(new WifiSurveyForm(_services))));
+        return tools;
+    }
+
+    private void ShowToolbox()
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        var toolbox = new ToolboxForm(_services);
+        SetForegroundWindow(_hostForm.Handle);
+        toolbox.Show();
+        toolbox.Activate();
+    }
+
+    private void OpenTool(Form tool)
+    {
+        if (_isExiting)
+        {
+            tool.Dispose();
+            return;
+        }
+
+        SetForegroundWindow(_hostForm.Handle);
+        tool.Show();
+        tool.Activate();
     }
 
     private void ShowMainWindow(string? selectInterfaceId = null)
