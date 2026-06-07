@@ -9,13 +9,24 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly NotifyIcon _notifyIcon;
     private readonly NetworkInfoService _networkInfoService;
     private readonly ToolStripMenuItem _autostartMenuItem;
+    private readonly Form _hostForm;
     private InterfacePopupForm? _popupForm;
     private bool _isExiting;
 
     public TrayApplicationContext()
     {
         _networkInfoService = new NetworkInfoService();
-        _popupForm = new InterfacePopupForm(_networkInfoService);
+
+        _hostForm = new Form
+        {
+            ShowInTaskbar = false,
+            FormBorderStyle = FormBorderStyle.None,
+            Size = new Size(0, 0),
+            Opacity = 0
+        };
+        MainForm = _hostForm;
+        _hostForm.Show();
+        _hostForm.Hide();
 
         _autostartMenuItem = new ToolStripMenuItem("Start with Windows")
         {
@@ -63,12 +74,31 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
+        EnsurePopupForm();
+
+        if (!_popupForm!.ShowNearTray())
+        {
+            RecreatePopupForm();
+            _popupForm.ShowNearTray();
+        }
+    }
+
+    private void EnsurePopupForm()
+    {
         if (_popupForm is null || _popupForm.IsDisposed)
         {
-            _popupForm = new InterfacePopupForm(_networkInfoService);
+            RecreatePopupForm();
+        }
+    }
+
+    private void RecreatePopupForm()
+    {
+        if (_popupForm is { IsDisposed: false })
+        {
+            _popupForm.Dispose();
         }
 
-        _popupForm.ShowNearTray();
+        _popupForm = new InterfacePopupForm(_networkInfoService);
     }
 
     private void Exit()
@@ -88,6 +118,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         _popupForm = null;
+        _hostForm.Close();
         ExitThread();
     }
 
@@ -100,6 +131,11 @@ public sealed class TrayApplicationContext : ApplicationContext
             if (_popupForm is { IsDisposed: false })
             {
                 _popupForm.Dispose();
+            }
+
+            if (!_hostForm.IsDisposed)
+            {
+                _hostForm.Dispose();
             }
         }
 

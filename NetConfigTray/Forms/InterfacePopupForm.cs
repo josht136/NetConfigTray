@@ -107,28 +107,36 @@ public sealed class InterfacePopupForm : Form
         };
     }
 
-    public void ShowNearTray()
+    public bool ShowNearTray()
     {
         if (IsDisposed)
         {
-            throw new ObjectDisposedException(nameof(InterfacePopupForm));
+            return false;
         }
 
         if (Visible)
         {
             Hide();
-            return;
+            return true;
         }
 
-        PositionNearTray();
-        Show();
-        Activate();
-        RefreshInterfaces();
+        try
+        {
+            PositionNearTray();
+            Show();
+            Activate();
+            RefreshInterfaces();
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (e.CloseReason == CloseReason.UserClosing)
+        if (e.CloseReason != CloseReason.ApplicationExitCall)
         {
             e.Cancel = true;
             Hide();
