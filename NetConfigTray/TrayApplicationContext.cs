@@ -86,6 +86,20 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
+        if (_hostForm.InvokeRequired)
+        {
+            try
+            {
+                _hostForm.BeginInvoke(UpdateTrayFromSnapshot);
+            }
+            catch (InvalidOperationException)
+            {
+                // Host form is closing.
+            }
+
+            return;
+        }
+
         try
         {
             var interfaces = _services.Snapshot.GetSnapshot();

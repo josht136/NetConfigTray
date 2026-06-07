@@ -31,6 +31,22 @@ public sealed class InterfaceDetailPanel : Panel
         Resize += (_, _) => _contentPanel.Width = ClientSize.Width - Padding.Horizontal - SystemInformation.VerticalScrollBarWidth;
     }
 
+    public void ShowPlaceholder(string message)
+    {
+        _info = null;
+        _sparkline = null;
+        _contentPanel.Controls.Clear();
+        _contentPanel.Controls.Add(new Label
+        {
+            Text = message,
+            ForeColor = Color.Gray,
+            AutoSize = true,
+            MaximumSize = new Size(Math.Max(240, ClientSize.Width - Padding.Horizontal - 8), 0),
+            Location = new Point(0, 0)
+        });
+        _contentPanel.Width = Math.Max(240, ClientSize.Width - Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
+    }
+
     public void Bind(
         NetworkInterfaceInfo info,
         long downloadBps,

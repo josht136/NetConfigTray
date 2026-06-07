@@ -9,6 +9,8 @@ public sealed class NetworkSnapshotService
     private IReadOnlyList<NetworkInterfaceInfo> _snapshot = Array.Empty<NetworkInterfaceInfo>();
     private NetworkInterfaceInfo? _primary;
     private int _refreshInProgress;
+    private bool _queuedRefresh;
+    private bool _queuedIncludeSlowDetails;
 
     public NetworkSnapshotService(NetworkInfoService networkInfo)
     {
@@ -48,18 +50,27 @@ public sealed class NetworkSnapshotService
 
     public void RequestRefresh(bool includeSlowDetails = false)
     {
+        if (includeSlowDetails)
+        {
+            _queuedIncludeSlowDetails = true;
+        }
+
         if (Interlocked.CompareExchange(ref _refreshInProgress, 1, 0) != 0)
         {
+            _queuedRefresh = true;
             return;
         }
 
         Task.Run(() =>
         {
+            var includeSlow = includeSlowDetails || _queuedIncludeSlowDetails;
+            _queuedIncludeSlowDetails = false;
+
             try
             {
                 var interfaces = _networkInfo.GetActiveInterfaces(
-                    includeConnectedDevices: includeSlowDetails,
-                    includeWifiDetails: includeSlowDetails);
+                    includeConnectedDevices: includeSlow,
+                    includeWifiDetails: includeSlow);
 
                 var primary = interfaces.FirstOrDefault(i => i.IsPrimary)
                     ?? interfaces.FirstOrDefault();
@@ -70,12 +81,23 @@ public sealed class NetworkSnapshotService
                     _primary = primary;
                     _lastRefresh = DateTime.UtcNow;
                 }
-
-                SnapshotUpdated?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Network refresh failed: {ex}");
             }
             finally
             {
                 Interlocked.Exchange(ref _refreshInProgress, 0);
+                SnapshotUpdated?.Invoke();
+
+                if (_queuedRefresh || _queuedIncludeSlowDetails)
+                {
+                    _queuedRefresh = false;
+                    var slow = _queuedIncludeSlowDetails;
+                    _queuedIncludeSlowDetails = false;
+                    RequestRefresh(slow);
+                }
             }
         });
     }
@@ -89,20 +111,27 @@ public sealed class NetworkSnapshotService
     {
         Task.Run(() =>
         {
-            var updated = _networkInfo.RefreshConnectedDevice(interfaceId);
-            if (updated is null)
+            try
             {
-                return;
-            }
+                var updated = _networkInfo.RefreshConnectedDevice(interfaceId);
+                if (updated is null)
+                {
+                    return;
+                }
 
-            lock (_lock)
+                lock (_lock)
+                {
+                    _snapshot = _snapshot
+                        .Select(info => info.Id == interfaceId ? updated : info)
+                        .ToList();
+                }
+
+                SnapshotUpdated?.Invoke();
+            }
+            catch (Exception ex)
             {
-                _snapshot = _snapshot
-                    .Select(info => info.Id == interfaceId ? updated : info)
-                    .ToList();
+                System.Diagnostics.Debug.WriteLine($"Connected device refresh failed: {ex}");
             }
-
-            SnapshotUpdated?.Invoke();
         });
     }
 

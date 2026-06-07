@@ -15,7 +15,6 @@ public sealed class InterfacePopupForm : Form
     private readonly System.Windows.Forms.Timer _slowRefreshTimer;
     private readonly Dictionary<string, NetworkInterfaceInfo> _interfacesById = new(StringComparer.OrdinalIgnoreCase);
     private string? _selectedInterfaceId;
-    private bool _refreshPending;
     private bool _forceClose;
 
     public InterfacePopupForm(AppServices services)
@@ -87,8 +86,9 @@ public sealed class InterfacePopupForm : Form
             BorderStyle = BorderStyle.None,
             Font = new Font("Segoe UI", 9F)
         };
-        _interfaceList.Columns.Add("Interface", 110);
-        _interfaceList.Columns.Add("Address", 100);
+        _interfaceList.Columns.Add("Interface", 120);
+        _interfaceList.Columns.Add("Address", 110);
+        _interfaceList.Columns.Add("Config", 60);
         _interfaceList.SelectedIndexChanged += (_, _) => OnInterfaceSelected();
 
         _splitContainer.Panel1.Controls.Add(_interfaceList);
@@ -115,7 +115,13 @@ public sealed class InterfacePopupForm : Form
         Controls.Add(_splitContainer);
         ResumeLayout(false);
 
-        Load += (_, _) => ConfigureSplitterLayout();
+        Load += (_, _) =>
+        {
+            ConfigureSplitterLayout();
+            ApplySnapshotToUi();
+        };
+
+        Resize += (_, _) => ConfigureSplitterLayout();
 
         _fastRefreshTimer = new System.Windows.Forms.Timer { Interval = 2000 };
         _fastRefreshTimer.Tick += (_, _) => UpdateThroughputOnly();
@@ -128,6 +134,7 @@ public sealed class InterfacePopupForm : Form
         Shown += (_, _) =>
         {
             ConfigureSplitterLayout();
+            ApplySnapshotToUi();
             _services.PublicIp.RefreshAsync();
             ForceRefresh(includeSlowDetails: false);
             _fastRefreshTimer.Start();
@@ -165,7 +172,39 @@ public sealed class InterfacePopupForm : Form
         Activate();
         BringToFront();
         ConfigureSplitterLayout();
+        ApplySnapshotToUi();
         ForceRefresh(includeSlowDetails: false);
+    }
+
+    private void RunOnUiThread(Action action)
+    {
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        if (!IsHandleCreated)
+        {
+            EventHandler? handler = null;
+            handler = (_, _) =>
+            {
+                Load -= handler;
+                if (!IsDisposed)
+                {
+                    action();
+                }
+            };
+            Load += handler;
+            return;
+        }
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(action);
+            return;
+        }
+
+        action();
     }
 
     private void ConfigureSplitterLayout()
@@ -252,28 +291,16 @@ public sealed class InterfacePopupForm : Form
 
     private void OnSnapshotUpdated()
     {
+        RunOnUiThread(ApplySnapshotToUi);
+    }
+
+    private void ApplySnapshotToUi()
+    {
         if (IsDisposed)
         {
             return;
         }
 
-        if (InvokeRequired)
-        {
-            BeginInvoke(ApplySnapshotToUi);
-            return;
-        }
-
-        ApplySnapshotToUi();
-    }
-
-    private void ApplySnapshotToUi()
-    {
-        if (IsDisposed || _refreshPending)
-        {
-            return;
-        }
-
-        _refreshPending = true;
         try
         {
             var interfaces = _services.Snapshot.GetSnapshot()
@@ -292,32 +319,66 @@ public sealed class InterfacePopupForm : Form
 
             var previousSelection = _selectedInterfaceId;
             _interfaceList.BeginUpdate();
-            _interfaceList.Items.Clear();
-
-            foreach (var info in interfaces)
+            try
             {
-                var item = new ListViewItem(info.Name)
+                foreach (ListViewItem item in _interfaceList.Items)
                 {
-                    Tag = info.Id
-                };
-                item.SubItems.Add(info.IPv4Address);
-                item.SubItems.Add(info.ConfigurationLabel);
-                if (info.IsPrimary)
-                {
-                    item.Font = new Font(_interfaceList.Font, FontStyle.Bold);
+                    if (item.Font != _interfaceList.Font)
+                    {
+                        item.Font.Dispose();
+                    }
                 }
 
-                _interfaceList.Items.Add(item);
+                _interfaceList.Items.Clear();
+
+                foreach (var info in interfaces)
+                {
+                    var item = new ListViewItem(info.Name)
+                    {
+                        Tag = info.Id
+                    };
+                    item.SubItems.Add(info.IPv4Address);
+                    item.SubItems.Add(info.ConfigurationLabel);
+                    if (info.IsPrimary)
+                    {
+                        item.Font = new Font(_interfaceList.Font, FontStyle.Bold);
+                    }
+
+                    _interfaceList.Items.Add(item);
+                }
+            }
+            finally
+            {
+                _interfaceList.EndUpdate();
             }
 
-            _interfaceList.EndUpdate();
+            if (interfaces.Count == 0)
+            {
+                _selectedInterfaceId = null;
+                _detailPanel.ShowPlaceholder("No active interfaces found. Click Refresh to try again.");
+                return;
+            }
 
-            SelectInterface(previousSelection ?? interfaces.FirstOrDefault(i => i.IsPrimary)?.Id ?? interfaces.FirstOrDefault()?.Id);
+            var targetId = previousSelection
+                ?? interfaces.FirstOrDefault(i => i.IsPrimary)?.Id
+                ?? interfaces[0].Id;
+
+            _interfaceList.SelectedIndexChanged -= OnInterfaceSelected;
+            try
+            {
+                SelectInterface(targetId);
+            }
+            finally
+            {
+                _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
+            }
+
             OnInterfaceSelected();
         }
-        finally
+        catch (Exception ex)
         {
-            _refreshPending = false;
+            _statusLabel.Text = $"{AppBranding.ShortName} — update failed: {ex.Message}";
+            _detailPanel.ShowPlaceholder("Unable to display network details. Try Refresh again.");
         }
     }
 
@@ -360,6 +421,7 @@ public sealed class InterfacePopupForm : Form
     {
         if (_interfaceList.SelectedItems.Count == 0)
         {
+            _detailPanel.ShowPlaceholder("Select an interface to view details.");
             return;
         }
 
@@ -373,14 +435,21 @@ public sealed class InterfacePopupForm : Form
         _selectedInterfaceId = selectedId;
         _services.Snapshot.RequestConnectedDevice(selectedId);
 
-        var (downloadBps, uploadBps) = _services.Throughput.GetThroughput(
-            info.Id,
-            info.BytesReceived,
-            info.BytesSent);
+        try
+        {
+            var (downloadBps, uploadBps) = _services.Throughput.GetThroughput(
+                info.Id,
+                info.BytesReceived,
+                info.BytesSent);
 
-        _services.ThroughputHistory.AddSample(info.Id, downloadBps, uploadBps);
-        var history = _services.ThroughputHistory.GetDownloadHistory(info.Id);
-        _detailPanel.Bind(info, downloadBps, uploadBps, history);
+            _services.ThroughputHistory.AddSample(info.Id, downloadBps, uploadBps);
+            var history = _services.ThroughputHistory.GetDownloadHistory(info.Id);
+            _detailPanel.Bind(info, downloadBps, uploadBps, history);
+        }
+        catch (Exception ex)
+        {
+            _detailPanel.ShowPlaceholder($"Unable to show details: {ex.Message}");
+        }
     }
 
     private NetworkInterfaceInfo EnrichInterface(NetworkInterfaceInfo info)
