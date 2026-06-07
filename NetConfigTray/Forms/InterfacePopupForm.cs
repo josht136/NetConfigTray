@@ -5,18 +5,21 @@ namespace NetConfigTray.Forms;
 
 public sealed class InterfacePopupForm : Form
 {
-    private readonly NetworkInfoService _networkInfoService;
+    private readonly NetworkSnapshotService _snapshotService;
     private readonly ThroughputMonitorService _throughputMonitorService;
     private readonly FlowLayoutPanel _interfacePanel;
     private readonly Label _statusLabel;
-    private readonly System.Windows.Forms.Timer _refreshTimer;
+    private readonly System.Windows.Forms.Timer _fastRefreshTimer;
+    private readonly System.Windows.Forms.Timer _slowRefreshTimer;
+    private readonly Dictionary<string, InterfaceCardPanel> _cards = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _expandedInterfaceIds = new(StringComparer.OrdinalIgnoreCase);
+    private bool _refreshPending;
 
     public InterfacePopupForm(
-        NetworkInfoService networkInfoService,
+        NetworkSnapshotService snapshotService,
         ThroughputMonitorService throughputMonitorService)
     {
-        _networkInfoService = networkInfoService;
+        _snapshotService = snapshotService;
         _throughputMonitorService = throughputMonitorService;
 
         Text = "NetConfigTray";
@@ -52,7 +55,7 @@ public sealed class InterfacePopupForm : Form
             FlatStyle = FlatStyle.System,
             Anchor = AnchorStyles.Top | AnchorStyles.Right
         };
-        refreshButton.Click += (_, _) => RefreshInterfaces();
+        refreshButton.Click += (_, _) => ForceRefresh(includeConnectedDevices: true);
 
         headerPanel.Controls.Add(titleLabel);
         headerPanel.Controls.Add(refreshButton);
@@ -76,33 +79,41 @@ public sealed class InterfacePopupForm : Form
             Height = 22,
             ForeColor = Color.Gray,
             TextAlign = ContentAlignment.MiddleLeft,
-            Text = "Click an interface for details · auto-refresh every 2s"
+            Text = "Click an interface for details"
         };
 
         Controls.Add(_interfacePanel);
         Controls.Add(_statusLabel);
         Controls.Add(headerPanel);
 
-        _refreshTimer = new System.Windows.Forms.Timer { Interval = 2000 };
-        _refreshTimer.Tick += (_, _) => RefreshInterfaces();
+        _fastRefreshTimer = new System.Windows.Forms.Timer { Interval = 2000 };
+        _fastRefreshTimer.Tick += (_, _) => UpdateThroughputOnly();
+
+        _slowRefreshTimer = new System.Windows.Forms.Timer { Interval = 10000 };
+        _slowRefreshTimer.Tick += (_, _) => _snapshotService.EnsureFresh(TimeSpan.FromSeconds(9));
+
+        _snapshotService.SnapshotUpdated += OnSnapshotUpdated;
 
         Deactivate += (_, _) => Hide();
         Shown += (_, _) =>
         {
             PositionNearTray();
-            RefreshInterfaces();
-            _refreshTimer.Start();
+            ForceRefresh(includeConnectedDevices: false);
+            _fastRefreshTimer.Start();
+            _slowRefreshTimer.Start();
         };
 
         VisibleChanged += (_, _) =>
         {
             if (Visible)
             {
-                _refreshTimer.Start();
+                _fastRefreshTimer.Start();
+                _slowRefreshTimer.Start();
             }
             else
             {
-                _refreshTimer.Stop();
+                _fastRefreshTimer.Stop();
+                _slowRefreshTimer.Stop();
             }
         };
     }
@@ -125,7 +136,7 @@ public sealed class InterfacePopupForm : Form
             PositionNearTray();
             Show();
             Activate();
-            RefreshInterfaces();
+            ForceRefresh(includeConnectedDevices: false);
             return true;
         }
         catch (ObjectDisposedException)
@@ -146,90 +157,180 @@ public sealed class InterfacePopupForm : Form
         base.OnFormClosing(e);
     }
 
-    private void PositionNearTray()
+    protected override void Dispose(bool disposing)
     {
-        var screen = Screen.FromPoint(Cursor.Position);
-        var area = screen.WorkingArea;
-        Location = new Point(area.Right - Width - 8, area.Bottom - Height - 8);
+        if (disposing)
+        {
+            _snapshotService.SnapshotUpdated -= OnSnapshotUpdated;
+            _fastRefreshTimer.Dispose();
+            _slowRefreshTimer.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 
-    private void RefreshInterfaces()
+    private void ForceRefresh(bool includeConnectedDevices)
+    {
+        _snapshotService.RequestRefresh(includeConnectedDevices);
+    }
+
+    private void OnSnapshotUpdated()
     {
         if (IsDisposed)
         {
             return;
         }
 
-        IReadOnlyList<NetworkInterfaceInfo> interfaces;
-
-        try
+        if (InvokeRequired)
         {
-            interfaces = _networkInfoService.GetActiveInterfaces();
-            _statusLabel.Text = $"Updated {DateTime.Now:t} · click interface for details";
-        }
-        catch (Exception ex)
-        {
-            _statusLabel.Text = $"Error: {ex.Message}";
-            interfaces = Array.Empty<NetworkInterfaceInfo>();
+            BeginInvoke(ApplySnapshotToUi);
+            return;
         }
 
-        _interfacePanel.SuspendLayout();
-        _interfacePanel.Controls.Clear();
-
-        if (interfaces.Count == 0)
-        {
-            _interfacePanel.Controls.Add(new Label
-            {
-                Text = "No active network interfaces found.",
-                ForeColor = Color.Gray,
-                Width = _interfacePanel.ClientSize.Width - 24,
-                Padding = new Padding(4)
-            });
-        }
-        else
-        {
-            foreach (var info in interfaces)
-            {
-                var (downloadBps, uploadBps) = _throughputMonitorService.GetThroughput(
-                    info.Id,
-                    info.BytesReceived,
-                    info.BytesSent);
-
-                var card = new InterfaceCardPanel(_interfacePanel.ClientSize.Width - 28)
-                {
-                    Tag = info.Id
-                };
-                card.ExpandedChanged += (_, _) =>
-                {
-                    if (card.Tag is not string id)
-                    {
-                        return;
-                    }
-
-                    if (card.IsExpanded)
-                    {
-                        _expandedInterfaceIds.Add(id);
-                    }
-                    else
-                    {
-                        _expandedInterfaceIds.Remove(id);
-                    }
-                };
-                card.Bind(info, downloadBps, uploadBps, _expandedInterfaceIds.Contains(info.Id));
-                _interfacePanel.Controls.Add(card);
-            }
-        }
-
-        _interfacePanel.ResumeLayout(performLayout: true);
+        ApplySnapshotToUi();
     }
 
-    protected override void Dispose(bool disposing)
+    private void ApplySnapshotToUi()
     {
-        if (disposing)
+        if (IsDisposed || _refreshPending)
         {
-            _refreshTimer.Dispose();
+            return;
         }
 
-        base.Dispose(disposing);
+        _refreshPending = true;
+        try
+        {
+            var interfaces = _snapshotService.GetSnapshot();
+            _statusLabel.Text = interfaces.Count == 0
+                ? "Refreshing…"
+                : $"Updated {DateTime.Now:t} · click interface for details";
+
+            _interfacePanel.SuspendLayout();
+
+            if (interfaces.Count == 0)
+            {
+                _interfacePanel.Controls.Clear();
+                _cards.Clear();
+                _interfacePanel.Controls.Add(new Label
+                {
+                    Text = "Refreshing network interfaces…",
+                    ForeColor = Color.Gray,
+                    Width = _interfacePanel.ClientSize.Width - 24,
+                    Padding = new Padding(4)
+                });
+            }
+            else
+            {
+                RemovePlaceholderLabels();
+
+                var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var info in interfaces)
+                {
+                    seenIds.Add(info.Id);
+                    var (downloadBps, uploadBps) = _throughputMonitorService.GetThroughput(
+                        info.Id,
+                        info.BytesReceived,
+                        info.BytesSent);
+
+                    if (!_cards.TryGetValue(info.Id, out var card))
+                    {
+                        card = CreateCard(info.Id);
+                        _cards[info.Id] = card;
+                        _interfacePanel.Controls.Add(card);
+                    }
+
+                    card.Bind(info, downloadBps, uploadBps, _expandedInterfaceIds.Contains(info.Id));
+                }
+
+                foreach (var id in _cards.Keys.ToList())
+                {
+                    if (seenIds.Contains(id))
+                    {
+                        continue;
+                    }
+
+                    if (_cards.Remove(id, out var removed))
+                    {
+                        _interfacePanel.Controls.Remove(removed);
+                        removed.Dispose();
+                        _expandedInterfaceIds.Remove(id);
+                    }
+                }
+            }
+
+            _interfacePanel.ResumeLayout(performLayout: true);
+        }
+        finally
+        {
+            _refreshPending = false;
+        }
+    }
+
+    private InterfaceCardPanel CreateCard(string interfaceId)
+    {
+        var card = new InterfaceCardPanel(_interfacePanel.ClientSize.Width - 28)
+        {
+            Tag = interfaceId
+        };
+
+        card.ExpandedChanged += (_, _) =>
+        {
+            if (card.Tag is not string id)
+            {
+                return;
+            }
+
+            if (card.IsExpanded)
+            {
+                _expandedInterfaceIds.Add(id);
+                _snapshotService.RequestConnectedDevice(id);
+            }
+            else
+            {
+                _expandedInterfaceIds.Remove(id);
+            }
+        };
+
+        return card;
+    }
+
+    private void UpdateThroughputOnly()
+    {
+        if (IsDisposed || _cards.Count == 0)
+        {
+            return;
+        }
+
+        var byteCounts = _snapshotService.GetLiveByteCounts();
+        foreach (var (id, card) in _cards)
+        {
+            if (!byteCounts.TryGetValue(id, out var counts))
+            {
+                continue;
+            }
+
+            var (downloadBps, uploadBps) = _throughputMonitorService.GetThroughput(
+                id,
+                counts.BytesReceived,
+                counts.BytesSent);
+
+            card.UpdateThroughput(downloadBps, uploadBps);
+        }
+    }
+
+    private void RemovePlaceholderLabels()
+    {
+        foreach (var label in _interfacePanel.Controls.OfType<Label>().ToList())
+        {
+            _interfacePanel.Controls.Remove(label);
+            label.Dispose();
+        }
+    }
+
+    private void PositionNearTray()
+    {
+        var screen = Screen.FromPoint(Cursor.Position);
+        var area = screen.WorkingArea;
+        Location = new Point(area.Right - Width - 8, area.Bottom - Height - 8);
     }
 }

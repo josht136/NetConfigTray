@@ -11,7 +11,7 @@ public sealed class NetworkInfoService
 {
     private readonly ConnectedDeviceService _connectedDeviceService = new();
 
-    public IReadOnlyList<NetworkInterfaceInfo> GetActiveInterfaces()
+    public IReadOnlyList<NetworkInterfaceInfo> GetActiveInterfaces(bool includeConnectedDevices = false)
     {
         var configurations = QueryIpConfigurations();
         var adapters = QueryAdapters();
@@ -60,7 +60,9 @@ public sealed class NetworkInfoService
                 InterfaceType = ni.NetworkInterfaceType,
                 BytesReceived = stats.BytesReceived,
                 BytesSent = stats.BytesSent,
-                ConnectedDevice = _connectedDeviceService.GetConnectedDevice(ni, gateway),
+                ConnectedDevice = includeConnectedDevices
+                    ? _connectedDeviceService.GetConnectedDevice(ni, gateway, resolveHostname: true)
+                    : null,
                 IsPrimary = interfaceIndex is not null && primaryInterfaceIndex == (uint)interfaceIndex.Value
             });
         }
@@ -76,10 +78,85 @@ public sealed class NetworkInfoService
             .ToList();
     }
 
-    public NetworkInterfaceInfo? GetPrimaryInterface()
+    public NetworkInterfaceInfo? GetPrimaryInterface(bool includeConnectedDevices = false)
     {
-        return GetActiveInterfaces().FirstOrDefault(i => i.IsPrimary)
-            ?? GetActiveInterfaces().FirstOrDefault();
+        return GetActiveInterfaces(includeConnectedDevices).FirstOrDefault(i => i.IsPrimary)
+            ?? GetActiveInterfaces(includeConnectedDevices).FirstOrDefault();
+    }
+
+    public NetworkInterfaceInfo? RefreshConnectedDevice(string interfaceId)
+    {
+        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (!string.Equals(ni.Id, interfaceId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (ni.OperationalStatus != OperationalStatus.Up ||
+                ni.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+            {
+                return null;
+            }
+
+            if (!TryGetIpv4Details(ni, out var ipv4, out var cidr))
+            {
+                return null;
+            }
+
+            var configurations = QueryIpConfigurations();
+            var adapters = QueryAdapters();
+            TryResolveAdapter(ni, adapters, out var adapter);
+            if (!TryGetConfiguration(ni, adapter, ipv4, configurations, out var config))
+            {
+                return null;
+            }
+
+            var name = ResolveFriendlyName(ni, adapter, config.Description);
+            var gateway = GetGateway(ni);
+            var stats = ni.GetIPv4Statistics();
+            var interfaceIndex = ni.GetIPProperties().GetIPv4Properties()?.Index;
+            var primaryInterfaceIndex = QueryPrimaryInterfaceIndex();
+
+            return new NetworkInterfaceInfo
+            {
+                Id = ni.Id,
+                Name = name,
+                IPv4Address = ipv4,
+                Cidr = cidr,
+                MacAddress = FormatHelper.FormatMacAddress(ni.GetPhysicalAddress()),
+                LinkSpeedBps = ni.Speed,
+                ConfigurationType = config.DhcpEnabled ? IpConfigurationType.Dhcp : IpConfigurationType.Static,
+                Gateway = gateway,
+                DnsServers = GetDnsServers(ni),
+                InterfaceType = ni.NetworkInterfaceType,
+                BytesReceived = stats.BytesReceived,
+                BytesSent = stats.BytesSent,
+                ConnectedDevice = _connectedDeviceService.GetConnectedDevice(ni, gateway, resolveHostname: true),
+                IsPrimary = interfaceIndex is not null && primaryInterfaceIndex == (uint)interfaceIndex.Value
+            };
+        }
+
+        return null;
+    }
+
+    public Dictionary<string, (long BytesReceived, long BytesSent)> GetLiveByteCounts()
+    {
+        var counts = new Dictionary<string, (long BytesReceived, long BytesSent)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (ni.OperationalStatus != OperationalStatus.Up ||
+                ni.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+            {
+                continue;
+            }
+
+            var stats = ni.GetIPv4Statistics();
+            counts[ni.Id] = (stats.BytesReceived, stats.BytesSent);
+        }
+
+        return counts;
     }
 
     private static string GetGateway(NetworkInterface networkInterface)

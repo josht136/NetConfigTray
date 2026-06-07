@@ -1,15 +1,14 @@
 using NetConfigTray.Forms;
 using NetConfigTray.Helpers;
-using NetConfigTray.Models;
 using NetConfigTray.Services;
 
 namespace NetConfigTray;
 
 public sealed class TrayApplicationContext : ApplicationContext
 {
+    private readonly NetworkSnapshotService _snapshotService = new();
+    private readonly ThroughputMonitorService _throughputMonitorService = new();
     private readonly NotifyIcon _notifyIcon;
-    private readonly NetworkInfoService _networkInfoService;
-    private readonly ThroughputMonitorService _throughputMonitorService;
     private readonly ToolStripMenuItem _autostartMenuItem;
     private readonly Form _hostForm;
     private readonly System.Windows.Forms.Timer _trayRefreshTimer;
@@ -19,9 +18,6 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     public TrayApplicationContext()
     {
-        _networkInfoService = new NetworkInfoService();
-        _throughputMonitorService = new ThroughputMonitorService();
-
         _hostForm = new Form
         {
             ShowInTaskbar = false,
@@ -63,14 +59,17 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
 
         _notifyIcon.MouseClick += OnNotifyIconMouseClick;
+        _snapshotService.SnapshotUpdated += (_, _) => UpdateTrayFromSnapshot();
 
         _trayRefreshTimer = new System.Windows.Forms.Timer { Interval = 5000 };
-        _trayRefreshTimer.Tick += (_, _) => RefreshTrayIcon();
+        _trayRefreshTimer.Tick += (_, _) =>
+            _snapshotService.EnsureFresh(TimeSpan.FromSeconds(4));
         _trayRefreshTimer.Start();
-        RefreshTrayIcon();
+
+        _snapshotService.RequestRefresh(includeConnectedDevices: false);
     }
 
-    private void RefreshTrayIcon()
+    private void UpdateTrayFromSnapshot()
     {
         if (_isExiting)
         {
@@ -79,7 +78,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         try
         {
-            var primary = _networkInfoService.GetPrimaryInterface();
+            var primary = _snapshotService.GetPrimaryInterface();
             var configType = primary?.ConfigurationType;
             var newIcon = AppIconHelper.CreateTrayIcon(configType);
 
@@ -87,14 +86,9 @@ public sealed class TrayApplicationContext : ApplicationContext
             _currentTrayIcon?.Dispose();
             _currentTrayIcon = newIcon;
 
-            if (primary is not null)
-            {
-                _notifyIcon.Text = $"{primary.Name}: {primary.IPv4Address} ({primary.ConfigurationLabel})";
-            }
-            else
-            {
-                _notifyIcon.Text = "NetConfigTray — No active interface";
-            }
+            _notifyIcon.Text = primary is not null
+                ? $"{primary.Name}: {primary.IPv4Address} ({primary.ConfigurationLabel})"
+                : "NetConfigTray — No active interface";
         }
         catch
         {
@@ -141,7 +135,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _popupForm.Dispose();
         }
 
-        _popupForm = new InterfacePopupForm(_networkInfoService, _throughputMonitorService);
+        _popupForm = new InterfacePopupForm(_snapshotService, _throughputMonitorService);
     }
 
     private void Exit()

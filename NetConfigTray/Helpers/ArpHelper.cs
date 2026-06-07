@@ -1,5 +1,6 @@
 using System.Net;
 using System.Runtime.InteropServices;
+
 namespace NetConfigTray.Helpers;
 
 internal static class ArpHelper
@@ -28,17 +29,17 @@ internal static class ArpHelper
         }
     }
 
-    public static string? ResolveHostname(IPAddress ipAddress)
+    public static string? ResolveHostname(IPAddress ipAddress, TimeSpan timeout)
     {
         try
         {
-            var entry = Dns.GetHostEntry(ipAddress);
-            if (string.IsNullOrWhiteSpace(entry.HostName))
+            var task = Task.Run(() =>
             {
-                return null;
-            }
+                var entry = Dns.GetHostEntry(ipAddress);
+                return string.IsNullOrWhiteSpace(entry.HostName) ? null : entry.HostName;
+            });
 
-            return entry.HostName;
+            return task.Wait(timeout) ? task.Result : null;
         }
         catch
         {
