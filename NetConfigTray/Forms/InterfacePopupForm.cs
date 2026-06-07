@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using NetConfigTray.Helpers;
 using NetConfigTray.Models;
 using NetConfigTray.Services;
@@ -7,6 +8,7 @@ namespace NetConfigTray.Forms;
 public sealed class InterfacePopupForm : Form
 {
     private readonly AppServices _services;
+    private readonly ContextMenuStrip _interfaceContextMenu = new();
     private readonly SplitContainer _splitContainer;
     private readonly ListView _interfaceList;
     private readonly ThroughputSparklineControl _sparkline;
@@ -114,6 +116,7 @@ public sealed class InterfacePopupForm : Form
         _interfaceList.DrawColumnHeader += OnInterfaceListDrawColumnHeader;
         _interfaceList.DrawSubItem += OnInterfaceListDrawSubItem;
         _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
+        _interfaceList.MouseClick += OnInterfaceListMouseClick;
 
         _sparkline = new ThroughputSparklineControl
         {
@@ -211,7 +214,7 @@ public sealed class InterfacePopupForm : Form
         };
     }
 
-    public void ShowMainWindow()
+    public void ShowMainWindow(string? selectInterfaceId = null)
     {
         if (IsDisposed)
         {
@@ -234,6 +237,12 @@ public sealed class InterfacePopupForm : Form
         ConfigureSplitterLayout();
         ResizeInterfaceListColumns();
         ApplySnapshotToUi();
+
+        if (!string.IsNullOrWhiteSpace(selectInterfaceId))
+        {
+            SelectInterface(selectInterfaceId);
+        }
+
         ForceRefresh(includeSlowDetails: false);
     }
 
@@ -432,6 +441,7 @@ public sealed class InterfacePopupForm : Form
         {
             _services.Snapshot.SnapshotUpdated -= OnSnapshotUpdated;
             _services.GatewayPing.GatewayPingUpdated -= OnGatewayPingUpdated;
+            _interfaceContextMenu.Dispose();
             _fastRefreshTimer.Dispose();
             _slowRefreshTimer.Dispose();
         }
@@ -703,6 +713,87 @@ public sealed class InterfacePopupForm : Form
     private void OnInterfaceSelected(object? sender, EventArgs e)
     {
         UpdateDetailPanelForSelection();
+    }
+
+    private void OnInterfaceListMouseClick(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Right)
+        {
+            return;
+        }
+
+        var hit = _interfaceList.HitTest(e.Location);
+        if (hit.Item?.Tag is not string id || !_interfacesById.TryGetValue(id, out var info))
+        {
+            return;
+        }
+
+        hit.Item.Selected = true;
+        hit.Item.Focused = true;
+        ShowInterfaceContextMenu(info, e.Location);
+    }
+
+    private void ShowInterfaceContextMenu(NetworkInterfaceInfo info, Point location)
+    {
+        var isDhcp = info.ConfigurationType == IpConfigurationType.Dhcp;
+        var hasGateway = !string.IsNullOrWhiteSpace(info.Gateway);
+
+        _interfaceContextMenu.Items.Clear();
+
+        var headerItem = new ToolStripMenuItem(info.Name) { Enabled = false };
+        _interfaceContextMenu.Items.Add(headerItem);
+        _interfaceContextMenu.Items.Add(new ToolStripSeparator());
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("LAN scan on this interface…", null, (_, _) =>
+        {
+            var scan = new LanScanForm(info);
+            scan.Show(this);
+        }));
+
+        _interfaceContextMenu.Items.Add(new ToolStripSeparator());
+
+        var renew = new ToolStripMenuItem("Renew DHCP lease", null, (_, _) =>
+            OpenCommandWindow("Renew DHCP lease", "ipconfig", $"/renew \"{info.Name}\"")) { Enabled = isDhcp };
+        var release = new ToolStripMenuItem("Release DHCP lease", null, (_, _) =>
+            OpenCommandWindow("Release DHCP lease", "ipconfig", $"/release \"{info.Name}\"")) { Enabled = isDhcp };
+        _interfaceContextMenu.Items.Add(renew);
+        _interfaceContextMenu.Items.Add(release);
+
+        _interfaceContextMenu.Items.Add(new ToolStripSeparator());
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Flush DNS cache", null, (_, _) =>
+            OpenCommandWindow("Flush DNS cache", "ipconfig", "/flushdns")));
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Traceroute to gateway…", null, (_, _) =>
+            OpenCommandWindow("Traceroute", "tracert", info.Gateway)) { Enabled = hasGateway });
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Continuous ping to gateway…", null, (_, _) =>
+            OpenCommandWindow("Ping gateway", "ping", $"-t {info.Gateway}")) { Enabled = hasGateway });
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("ipconfig /all…", null, (_, _) =>
+            OpenCommandWindow("ipconfig /all", "ipconfig", "/all")));
+
+        _interfaceContextMenu.Items.Add(new ToolStripSeparator());
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Open Windows network connections", null, (_, _) =>
+            OpenNetworkConnections()));
+
+        _interfaceContextMenu.Show(_interfaceList, location);
+    }
+
+    private void OpenCommandWindow(string title, string fileName, string arguments)
+    {
+        var form = new CommandOutputForm(title, fileName, arguments);
+        form.Show(this);
+    }
+
+    private static void OpenNetworkConnections()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("ncpa.cpl") { UseShellExecute = true });
+        }
+        catch
+        {
+            // Settings shell not available.
+        }
     }
 
     private NetworkInterfaceInfo EnrichInterface(NetworkInterfaceInfo info)

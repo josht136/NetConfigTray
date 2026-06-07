@@ -38,6 +38,37 @@ public static class SubnetCalculatorHelper
         };
     }
 
+    /// <summary>
+    /// Enumerates host IPs from <paramref name="firstHost"/> to <paramref name="lastHost"/>
+    /// inclusive, capped at <paramref name="limit"/> addresses.
+    /// </summary>
+    public static List<string> EnumerateHostRange(string firstHost, string lastHost, int limit)
+    {
+        var hosts = new List<string>();
+        if (!IPAddress.TryParse(firstHost, out var first) ||
+            !IPAddress.TryParse(lastHost, out var last) ||
+            first.AddressFamily != AddressFamily.InterNetwork ||
+            last.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return hosts;
+        }
+
+        var start = IpToUInt32(first);
+        var end = IpToUInt32(last);
+        if (end < start)
+        {
+            return hosts;
+        }
+
+        var count = Math.Min((long)(end - start) + 1, limit);
+        for (long i = 0; i < count; i++)
+        {
+            hosts.Add(UInt32ToIp(start + (uint)i));
+        }
+
+        return hosts;
+    }
+
     private static uint IpToUInt32(IPAddress address)
     {
         var bytes = address.GetAddressBytes();
