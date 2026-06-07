@@ -143,10 +143,13 @@ public sealed class InterfacePopupForm : Form
         AppTheme.StyleStatusLabel(_statusLabel);
         statusPanel.Controls.Add(_statusLabel);
 
+        // Docked controls are laid out front-to-back in z-order, so the DockStyle.Fill
+        // control must be added first (sent to back). Otherwise it fills the whole client
+        // area and the Top/Bottom panels paint over its edges.
         SuspendLayout();
-        Controls.Add(headerPanel);
-        Controls.Add(statusPanel);
         Controls.Add(_splitContainer);
+        Controls.Add(statusPanel);
+        Controls.Add(headerPanel);
         ResumeLayout(false);
 
         HandleCreated += (_, _) => DarkModeHelper.TryEnableDarkTitleBar(this);
