@@ -55,7 +55,7 @@ public sealed class ConnectedDeviceService
     private static ConnectedDeviceInfo? GetWifiAccessPoint(string interfaceName, string gateway)
     {
         var wifiInfo = ParseWifiInterfaceInfo(interfaceName);
-        if (wifiInfo is null)
+        if (wifiInfo is not { } wifi)
         {
             return GetWiredUpstreamDevice(gateway);
         }
@@ -64,9 +64,9 @@ public sealed class ConnectedDeviceService
         {
             Role = "Access point",
             IpAddress = gateway is { Length: > 0 } ? gateway : null,
-            Hostname = wifiInfo.Ssid,
-            MacAddress = wifiInfo.Bssid,
-            ExtraInfo = wifiInfo.Signal is not null ? $"SSID: {wifiInfo.Ssid} · Signal: {wifiInfo.Signal}" : $"SSID: {wifiInfo.Ssid}"
+            Hostname = wifi.Ssid,
+            MacAddress = wifi.Bssid,
+            ExtraInfo = wifi.Signal is not null ? $"SSID: {wifi.Ssid} · Signal: {wifi.Signal}" : $"SSID: {wifi.Ssid}"
         };
     }
 
