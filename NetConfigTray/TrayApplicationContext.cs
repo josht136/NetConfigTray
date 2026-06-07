@@ -1,16 +1,15 @@
 using NetConfigTray.Forms;
 using NetConfigTray.Helpers;
-using NetConfigTray.Models;
 using NetConfigTray.Services;
 
 namespace NetConfigTray;
 
 public sealed class TrayApplicationContext : ApplicationContext
 {
+    private readonly AppServices _services = new();
     private readonly NotifyIcon _notifyIcon;
-    private readonly NetworkInfoService _networkInfoService;
-    private readonly ThroughputMonitorService _throughputMonitorService;
     private readonly ToolStripMenuItem _autostartMenuItem;
+    private readonly ToolStripMenuItem _notificationsMenuItem;
     private readonly Form _hostForm;
     private readonly System.Windows.Forms.Timer _trayRefreshTimer;
     private InterfacePopupForm? _popupForm;
@@ -19,9 +18,6 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     public TrayApplicationContext()
     {
-        _networkInfoService = new NetworkInfoService();
-        _throughputMonitorService = new ThroughputMonitorService();
-
         _hostForm = new Form
         {
             ShowInTaskbar = false,
@@ -47,9 +43,16 @@ public sealed class TrayApplicationContext : ApplicationContext
             _autostartMenuItem.Checked = true;
         }
 
+        _notificationsMenuItem = new ToolStripMenuItem("Change notifications")
+        {
+            CheckOnClick = true,
+            Checked = true
+        };
+
         var contextMenu = new ContextMenuStrip();
         contextMenu.Items.Add(new ToolStripMenuItem("Open", null, (_, _) => ShowPopup()));
         contextMenu.Items.Add(_autostartMenuItem);
+        contextMenu.Items.Add(_notificationsMenuItem);
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => Exit()));
 
@@ -65,12 +68,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon.MouseClick += OnNotifyIconMouseClick;
 
         _trayRefreshTimer = new System.Windows.Forms.Timer { Interval = 5000 };
-        _trayRefreshTimer.Tick += (_, _) => RefreshTrayIcon();
+        _trayRefreshTimer.Tick += (_, _) => RefreshTrayState();
         _trayRefreshTimer.Start();
-        RefreshTrayIcon();
+        RefreshTrayState();
     }
 
-    private void RefreshTrayIcon()
+    private void RefreshTrayState()
     {
         if (_isExiting)
         {
@@ -79,7 +82,23 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         try
         {
-            var primary = _networkInfoService.GetPrimaryInterface();
+            _services.PublicIp.RefreshAsync();
+            var interfaces = _services.NetworkInfo.GetActiveInterfaces();
+            var primary = interfaces.FirstOrDefault(i => i.IsPrimary) ?? interfaces.FirstOrDefault();
+
+            if (_notificationsMenuItem.Checked)
+            {
+                var changes = _services.ChangeNotifier.DetectChanges(interfaces);
+                if (changes.Count > 0)
+                {
+                    var message = changes.Count == 1
+                        ? changes[0]
+                        : string.Join(Environment.NewLine, changes.Take(3));
+
+                    _notifyIcon.ShowBalloonTip(4000, "NetConfigTray", message, ToolTipIcon.Info);
+                }
+            }
+
             var configType = primary?.ConfigurationType;
             var newIcon = AppIconHelper.CreateTrayIcon(configType);
 
@@ -89,7 +108,8 @@ public sealed class TrayApplicationContext : ApplicationContext
 
             if (primary is not null)
             {
-                _notifyIcon.Text = $"{primary.Name}: {primary.IPv4Address} ({primary.ConfigurationLabel})";
+                var publicIp = _services.PublicIp.GetDisplayText();
+                _notifyIcon.Text = $"{primary.Name}: {primary.IPv4Address} ({primary.ConfigurationLabel}) · Public {publicIp}";
             }
             else
             {
@@ -141,7 +161,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _popupForm.Dispose();
         }
 
-        _popupForm = new InterfacePopupForm(_networkInfoService, _throughputMonitorService);
+        _popupForm = new InterfacePopupForm(_services);
     }
 
     private void Exit()
@@ -164,6 +184,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         _popupForm = null;
         _currentTrayIcon?.Dispose();
+        _services.PublicIp.Dispose();
         _hostForm.Close();
         ExitThread();
     }
@@ -175,6 +196,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _trayRefreshTimer.Dispose();
             _notifyIcon.Dispose();
             _currentTrayIcon?.Dispose();
+            _services.PublicIp.Dispose();
 
             if (_popupForm is { IsDisposed: false })
             {

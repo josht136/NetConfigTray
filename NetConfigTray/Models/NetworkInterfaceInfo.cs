@@ -24,6 +24,19 @@ public sealed record NetworkInterfaceInfo
     public required long BytesSent { get; init; }
     public ConnectedDeviceInfo? ConnectedDevice { get; init; }
     public bool IsPrimary { get; init; }
+    public SubnetInfo? Subnet { get; init; }
+    public string? DhcpServer { get; init; }
+    public string? DhcpLeaseObtained { get; init; }
+    public string? DhcpLeaseExpires { get; init; }
+    public uint? RouteMetric { get; init; }
+    public string? ConnectionUptime { get; init; }
+    public string? GatewayPing { get; init; }
+    public string? WifiChannel { get; init; }
+    public string? WifiBand { get; init; }
+    public string? WifiRadioType { get; init; }
 
     public string ConfigurationLabel => ConfigurationType == IpConfigurationType.Dhcp ? "DHCP" : "Static";
+
+    public string ChangeSignature =>
+        $"{Id}|{IPv4Address}|{ConfigurationType}|{Gateway}|{DhcpLeaseExpires}|{WifiChannel}";
 }

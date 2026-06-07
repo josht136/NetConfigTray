@@ -5,19 +5,15 @@ namespace NetConfigTray.Forms;
 
 public sealed class InterfacePopupForm : Form
 {
-    private readonly NetworkInfoService _networkInfoService;
-    private readonly ThroughputMonitorService _throughputMonitorService;
+    private readonly AppServices _services;
     private readonly FlowLayoutPanel _interfacePanel;
     private readonly Label _statusLabel;
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly HashSet<string> _expandedInterfaceIds = new(StringComparer.OrdinalIgnoreCase);
 
-    public InterfacePopupForm(
-        NetworkInfoService networkInfoService,
-        ThroughputMonitorService throughputMonitorService)
+    public InterfacePopupForm(AppServices services)
     {
-        _networkInfoService = networkInfoService;
-        _throughputMonitorService = throughputMonitorService;
+        _services = services;
 
         Text = "NetConfigTray";
         FormBorderStyle = FormBorderStyle.FixedToolWindow;
@@ -25,7 +21,7 @@ public sealed class InterfacePopupForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        ClientSize = new Size(420, 360);
+        ClientSize = new Size(440, 420);
         BackColor = Color.White;
         Font = new Font("Segoe UI", 9F);
         Padding = new Padding(12);
@@ -73,9 +69,9 @@ public sealed class InterfacePopupForm : Form
         _statusLabel = new Label
         {
             Dock = DockStyle.Bottom,
-            Height = 22,
+            Height = 34,
             ForeColor = Color.Gray,
-            TextAlign = ContentAlignment.MiddleLeft,
+            TextAlign = ContentAlignment.TopLeft,
             Text = "Click an interface for details · auto-refresh every 2s"
         };
 
@@ -90,6 +86,7 @@ public sealed class InterfacePopupForm : Form
         Shown += (_, _) =>
         {
             PositionNearTray();
+            _services.PublicIp.RefreshAsync();
             RefreshInterfaces();
             _refreshTimer.Start();
         };
@@ -164,8 +161,11 @@ public sealed class InterfacePopupForm : Form
 
         try
         {
-            interfaces = _networkInfoService.GetActiveInterfaces();
-            _statusLabel.Text = $"Updated {DateTime.Now:t} · click interface for details";
+            interfaces = _services.NetworkInfo.GetActiveInterfaces()
+                .Select(EnrichInterface)
+                .ToList();
+            _statusLabel.Text =
+                $"Public IP: {_services.PublicIp.GetDisplayText()}{Environment.NewLine}Updated {DateTime.Now:t} · click interface for details";
         }
         catch (Exception ex)
         {
@@ -190,10 +190,13 @@ public sealed class InterfacePopupForm : Form
         {
             foreach (var info in interfaces)
             {
-                var (downloadBps, uploadBps) = _throughputMonitorService.GetThroughput(
+                var (downloadBps, uploadBps) = _services.Throughput.GetThroughput(
                     info.Id,
                     info.BytesReceived,
                     info.BytesSent);
+
+                _services.ThroughputHistory.AddSample(info.Id, downloadBps, uploadBps);
+                var history = _services.ThroughputHistory.GetDownloadHistory(info.Id);
 
                 var card = new InterfaceCardPanel(_interfacePanel.ClientSize.Width - 28)
                 {
@@ -215,12 +218,23 @@ public sealed class InterfacePopupForm : Form
                         _expandedInterfaceIds.Remove(id);
                     }
                 };
-                card.Bind(info, downloadBps, uploadBps, _expandedInterfaceIds.Contains(info.Id));
+                card.Bind(info, downloadBps, uploadBps, history, _expandedInterfaceIds.Contains(info.Id));
                 _interfacePanel.Controls.Add(card);
             }
         }
 
         _interfacePanel.ResumeLayout(performLayout: true);
+    }
+
+    private NetworkInterfaceInfo EnrichInterface(NetworkInterfaceInfo info)
+    {
+        _services.GatewayPing.QueuePing(info.Gateway);
+
+        return info with
+        {
+            ConnectionUptime = _services.Uptime.GetUptimeText(info.Id, isActive: true),
+            GatewayPing = _services.GatewayPing.GetLatencyText(info.Gateway)
+        };
     }
 
     protected override void Dispose(bool disposing)

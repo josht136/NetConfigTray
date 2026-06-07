@@ -98,7 +98,12 @@ public sealed class InterfaceCardPanel : Panel
         Resize += (_, _) => _badge.Location = new Point(Width - 80, 0);
     }
 
-    public void Bind(NetworkInterfaceInfo info, long downloadBps, long uploadBps, bool expanded)
+    public void Bind(
+        NetworkInterfaceInfo info,
+        long downloadBps,
+        long uploadBps,
+        IReadOnlyList<long> downloadHistory,
+        bool expanded)
     {
         _info = info;
         _downloadBps = downloadBps;
@@ -119,7 +124,7 @@ public sealed class InterfaceCardPanel : Panel
             _hintLabel.Text = expanded ? "Click to collapse" : "Click for details";
         }
 
-        RebuildDetails();
+        RebuildDetails(downloadHistory);
         UpdateHeight();
     }
 
@@ -142,7 +147,7 @@ public sealed class InterfaceCardPanel : Panel
         SetExpanded(!IsExpanded);
     }
 
-    private void RebuildDetails()
+    private void RebuildDetails(IReadOnlyList<long> downloadHistory)
     {
         if (_info is null)
         {
@@ -157,8 +162,46 @@ public sealed class InterfaceCardPanel : Panel
         AddDetailRow("Link speed", FormatHelper.FormatLinkSpeed(_info.LinkSpeedBps), ref y);
         AddDetailRow("Download", FormatHelper.FormatThroughput(_downloadBps), ref y);
         AddDetailRow("Upload", FormatHelper.FormatThroughput(_uploadBps), ref y);
+        AddDetailRow("Connection uptime", _info.ConnectionUptime ?? "Unknown", ref y);
         AddDetailRow("Gateway", string.IsNullOrWhiteSpace(_info.Gateway) ? "None" : _info.Gateway, ref y);
+        AddDetailRow("Gateway ping", _info.GatewayPing ?? "—", ref y);
+        AddDetailRow("Route metric", _info.RouteMetric?.ToString() ?? "Unknown", ref y);
         AddDetailRow("DNS servers", _info.DnsServers, ref y);
+
+        if (_info.Subnet is not null)
+        {
+            AddSectionHeader("Subnet", ref y);
+            AddDetailRow("Network", _info.Subnet.NetworkAddress, ref y);
+            AddDetailRow("Broadcast", _info.Subnet.BroadcastAddress, ref y);
+            AddDetailRow("Host range", $"{_info.Subnet.FirstHost} – {_info.Subnet.LastHost}", ref y);
+            AddDetailRow("Usable hosts", _info.Subnet.UsableHosts.ToString(), ref y);
+        }
+
+        if (_info.ConfigurationType == IpConfigurationType.Dhcp)
+        {
+            AddSectionHeader("DHCP lease", ref y);
+            AddDetailRow("DHCP server", _info.DhcpServer ?? "Unknown", ref y);
+            AddDetailRow("Lease obtained", _info.DhcpLeaseObtained ?? "Unknown", ref y);
+            AddDetailRow("Lease expires", _info.DhcpLeaseExpires ?? "Unknown", ref y);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_info.WifiChannel))
+        {
+            AddSectionHeader("Wi-Fi", ref y);
+            AddDetailRow("Channel", _info.WifiChannel!, ref y);
+            AddDetailRow("Band", _info.WifiBand ?? "Unknown", ref y);
+            AddDetailRow("Radio type", _info.WifiRadioType ?? "Unknown", ref y);
+        }
+
+        AddSectionHeader("Throughput history", ref y);
+        var sparkline = new ThroughputSparklineControl
+        {
+            Width = Width - 24,
+            Location = new Point(0, y)
+        };
+        sparkline.SetSamples(downloadHistory);
+        _detailsPanel.Controls.Add(sparkline);
+        y += sparkline.Height + 8;
 
         if (_info.ConnectedDevice is not null)
         {
@@ -267,9 +310,34 @@ public sealed class InterfaceCardPanel : Panel
             $"Link speed: {FormatHelper.FormatLinkSpeed(_info.LinkSpeedBps)}",
             $"Download: {FormatHelper.FormatThroughput(_downloadBps)}",
             $"Upload: {FormatHelper.FormatThroughput(_uploadBps)}",
+            $"Connection uptime: {_info.ConnectionUptime}",
             $"Gateway: {_info.Gateway}",
+            $"Gateway ping: {_info.GatewayPing}",
+            $"Route metric: {_info.RouteMetric}",
             $"DNS: {_info.DnsServers}"
         };
+
+        if (_info.Subnet is not null)
+        {
+            lines.Add($"Network: {_info.Subnet.NetworkAddress}");
+            lines.Add($"Broadcast: {_info.Subnet.BroadcastAddress}");
+            lines.Add($"Host range: {_info.Subnet.FirstHost} – {_info.Subnet.LastHost}");
+            lines.Add($"Usable hosts: {_info.Subnet.UsableHosts}");
+        }
+
+        if (_info.ConfigurationType == IpConfigurationType.Dhcp)
+        {
+            lines.Add($"DHCP server: {_info.DhcpServer}");
+            lines.Add($"Lease obtained: {_info.DhcpLeaseObtained}");
+            lines.Add($"Lease expires: {_info.DhcpLeaseExpires}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_info.WifiChannel))
+        {
+            lines.Add($"Wi-Fi channel: {_info.WifiChannel}");
+            lines.Add($"Wi-Fi band: {_info.WifiBand}");
+            lines.Add($"Wi-Fi radio: {_info.WifiRadioType}");
+        }
 
         if (_info.ConnectedDevice is not null)
         {

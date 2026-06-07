@@ -10,6 +10,15 @@ A lightweight Windows system tray app that shows active network interfaces with 
 - **Interface details** — CIDR, MAC, link speed, live upload/download, gateway, DNS
 - **Connected device** — upstream gateway on Ethernet; AP BSSID/SSID/signal on Wi-Fi
 - **Copy support** — copy individual fields or all details for an interface
+- **DHCP lease info** — server, obtained, and expiry times
+- **Wi-Fi details** — channel, band, and radio type
+- **Subnet calculator** — network, broadcast, host range, usable hosts
+- **Gateway ping** — round-trip latency to default gateway
+- **Route metric** — interface routing priority
+- **Connection uptime** — time since interface was first seen active
+- **Public IP** — external address shown in popup status bar
+- **Throughput sparkline** — download history chart per interface
+- **Change notifications** — balloon tips when IP or config changes (toggle in tray menu)
 - **Auto-refresh** — updates every 2 seconds while the popup is open
 - **Manual refresh** — Refresh button for on-demand updates
 - **Exit** — right-click the tray icon → Exit
