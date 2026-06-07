@@ -16,9 +16,10 @@ public sealed class InterfaceDetailPanel : Panel
     public InterfaceDetailPanel()
     {
         Dock = DockStyle.Fill;
-        BackColor = Color.White;
+        BackColor = AppTheme.AppBackground;
+        ForeColor = AppTheme.TextPrimary;
         AutoScroll = true;
-        Padding = new Padding(16, 12, 16, 12);
+        Padding = new Padding(20, 16, 20, 16);
         DoubleBuffered = true;
         SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
 
@@ -26,7 +27,7 @@ public sealed class InterfaceDetailPanel : Panel
         {
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Color.White,
+            BackColor = AppTheme.AppBackground,
             Location = new Point(0, 0),
             MinimumSize = new Size(280, 0)
         };
@@ -48,10 +49,12 @@ public sealed class InterfaceDetailPanel : Panel
             _contentPanel.Controls.Add(new Label
             {
                 Text = message,
-                ForeColor = Color.Gray,
+                ForeColor = AppTheme.TextMuted,
+                Font = AppTheme.FontBody,
                 AutoSize = true,
                 MaximumSize = new Size(Math.Max(240, ClientSize.Width - Padding.Horizontal - 8), 0),
-                Location = new Point(0, 0)
+                Location = new Point(0, 0),
+                BackColor = Color.Transparent
             });
             _contentPanel.Width = Math.Max(240, ClientSize.Width - Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
         }
@@ -176,6 +179,7 @@ public sealed class InterfaceDetailPanel : Panel
 
             AddHeader(_info.Name, _info.IsPrimary, ref y, contentWidth);
             AddBadge(_info.ConfigurationLabel, _info.ConfigurationType, ref y, contentWidth);
+            y += 4;
             AddDetailRow("IP address", _info.IPv4Address, ref y, contentWidth);
             AddDetailRow("CIDR", _info.Cidr, ref y, contentWidth);
             AddDetailRow("MAC address", _info.MacAddress, ref y, contentWidth);
@@ -221,7 +225,7 @@ public sealed class InterfaceDetailPanel : Panel
             };
             _sparkline.SetSamples(downloadHistory);
             _contentPanel.Controls.Add(_sparkline);
-            y += _sparkline.Height + 8;
+            y += _sparkline.Height + 12;
 
             if (_info.ConnectedDevice is not null)
             {
@@ -253,13 +257,13 @@ public sealed class InterfaceDetailPanel : Panel
             {
                 Text = "Copy all details",
                 AutoSize = true,
-                FlatStyle = FlatStyle.System,
                 Location = new Point(0, y + 4)
             };
+            AppTheme.StyleAccentButton(copyAllButton);
             copyAllButton.Click += (_, _) => ClipboardHelper.CopyText(BuildCopyText());
             _contentPanel.Controls.Add(copyAllButton);
 
-            _contentPanel.Height = y + copyAllButton.Height + 12;
+            _contentPanel.Height = y + copyAllButton.Height + 16;
             _contentPanel.Width = contentWidth;
         }
         finally
@@ -272,59 +276,80 @@ public sealed class InterfaceDetailPanel : Panel
     {
         var title = new Label
         {
-            Text = isPrimary ? $"{name} (Primary)" : name,
-            Font = new Font("Segoe UI Semibold", 14F, FontStyle.Bold),
+            Text = isPrimary ? $"{name}  ·  Primary" : name,
+            Font = AppTheme.FontHeader,
+            ForeColor = AppTheme.TextPrimary,
             AutoSize = true,
             Location = new Point(0, y),
-            MaximumSize = new Size(width - 8, 0)
+            MaximumSize = new Size(width - 8, 0),
+            BackColor = Color.Transparent
         };
         _contentPanel.Controls.Add(title);
-        y += title.Height + 6;
+        y += title.Height + 8;
     }
 
     private void AddBadge(string text, IpConfigurationType type, ref int y, int width)
     {
-        var isDhcp = type == IpConfigurationType.Dhcp;
         var badge = new Label
         {
             Name = "ConfigBadge",
-            Text = text,
-            Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
-            ForeColor = isDhcp ? Color.FromArgb(16, 124, 16) : Color.FromArgb(202, 80, 16),
-            BackColor = isDhcp ? Color.FromArgb(223, 246, 221) : Color.FromArgb(255, 236, 224),
+            Text = text.ToUpperInvariant(),
+            Font = AppTheme.FontCaption,
+            ForeColor = AppTheme.ConfigColor(type),
+            BackColor = AppTheme.ConfigBackground(type),
             AutoSize = true,
-            Padding = new Padding(10, 4, 10, 4),
+            Padding = new Padding(10, 5, 10, 5),
             TextAlign = ContentAlignment.MiddleCenter,
             Location = new Point(0, y)
         };
         _contentPanel.Controls.Add(badge);
-        y += badge.Height + 12;
+        y += badge.Height + 14;
     }
 
     private void AddSectionHeader(string text, ref int y, int width)
     {
+        y += 6;
+        var rule = new Panel
+        {
+            BackColor = AppTheme.BorderSubtle,
+            Location = new Point(0, y),
+            Size = new Size(width, 1)
+        };
+        _contentPanel.Controls.Add(rule);
+        y += 10;
+
         var label = new Label
         {
-            Text = text,
-            Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold),
-            ForeColor = Color.FromArgb(0, 102, 204),
+            Text = text.ToUpperInvariant(),
+            Font = AppTheme.FontSection,
+            ForeColor = AppTheme.Accent,
             AutoSize = true,
             Location = new Point(0, y),
-            MaximumSize = new Size(width - 8, 0)
+            MaximumSize = new Size(width - 8, 0),
+            BackColor = Color.Transparent
         };
         _contentPanel.Controls.Add(label);
-        y += label.Height + 6;
+        y += label.Height + 8;
     }
 
     private void AddDetailRow(string labelText, string value, ref int y, int width, string? valueKey = null)
     {
+        var rowPanel = new Panel
+        {
+            BackColor = AppTheme.Surface,
+            Location = new Point(0, y),
+            Size = new Size(width, 52),
+            Padding = new Padding(12, 8, 12, 8)
+        };
+
         var label = new Label
         {
-            Text = labelText,
-            Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
-            ForeColor = Color.Gray,
+            Text = labelText.ToUpperInvariant(),
+            Font = AppTheme.FontCaption,
+            ForeColor = AppTheme.TextMuted,
             AutoSize = true,
-            Location = new Point(0, y)
+            Location = new Point(12, 8),
+            BackColor = Color.Transparent
         };
 
         var valueLabel = new Label
@@ -332,36 +357,47 @@ public sealed class InterfaceDetailPanel : Panel
             Name = valueKey is null ? null : $"Value_{valueKey}",
             Tag = labelText,
             Text = value,
-            Font = new Font("Segoe UI", 10F),
+            Font = AppTheme.ValueFont,
+            ForeColor = AppTheme.TextPrimary,
             AutoSize = true,
-            MaximumSize = new Size(width - 84, 0),
-            Location = new Point(0, y + 16)
+            MaximumSize = new Size(width - 108, 0),
+            Location = new Point(12, 26),
+            BackColor = Color.Transparent
         };
 
         var copyButton = new Button
         {
             Text = "Copy",
-            Size = new Size(52, 24),
-            FlatStyle = FlatStyle.System,
-            Location = new Point(width - 60, y + 8)
+            Size = new Size(56, 28),
+            Location = new Point(width - 68, 12)
         };
+        AppTheme.StyleGhostButton(copyButton);
         copyButton.Click += (_, _) => ClipboardHelper.CopyText(value);
 
-        _contentPanel.Controls.Add(label);
-        _contentPanel.Controls.Add(valueLabel);
-        _contentPanel.Controls.Add(copyButton);
+        rowPanel.Controls.Add(label);
+        rowPanel.Controls.Add(valueLabel);
+        rowPanel.Controls.Add(copyButton);
+        _contentPanel.Controls.Add(rowPanel);
 
-        y += Math.Max(valueLabel.Height + 22, 40);
+        y += rowPanel.Height + 6;
     }
 
     private void UpdateValue(string labelText, string value)
     {
         foreach (Control control in _contentPanel.Controls)
         {
-            if (control is Label { Tag: string tag } label && tag == labelText)
+            if (control is not Panel rowPanel)
             {
-                label.Text = value;
-                break;
+                continue;
+            }
+
+            foreach (Control child in rowPanel.Controls)
+            {
+                if (child is Label { Tag: string tag } label && tag == labelText)
+                {
+                    label.Text = value;
+                    return;
+                }
             }
         }
     }

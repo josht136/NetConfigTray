@@ -32,51 +32,67 @@ public sealed class InterfacePopupForm : Form
         ShowInTaskbar = true;
         TopMost = false;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(640, 420);
-        ClientSize = new Size(760, 480);
-        BackColor = Color.White;
-        Font = new Font("Segoe UI", 9F);
+        MinimumSize = new Size(680, 460);
+        ClientSize = new Size(820, 520);
+        AppTheme.ApplyFormChrome(this);
 
         var headerPanel = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 44,
-            BackColor = Color.FromArgb(245, 245, 245),
-            Padding = new Padding(12, 8, 12, 8)
+            Height = 56
+        };
+        AppTheme.StyleHeaderPanel(headerPanel);
+
+        var accentMark = new Panel
+        {
+            Size = new Size(4, 22),
+            BackColor = AppTheme.Accent,
+            Location = new Point(20, 17)
         };
 
-        var titleLabel = new Label
+        var titleStack = new Panel
         {
-            Text = AppBranding.FullName,
-            Font = new Font("Segoe UI Semibold", 12F, FontStyle.Bold),
-            AutoSize = true,
-            Location = new Point(12, 10)
+            BackColor = Color.Transparent,
+            Location = new Point(32, 10),
+            Size = new Size(360, 36)
         };
+
+        var titleLabel = new Label();
+        AppTheme.StyleTitleLabel(titleLabel, AppBranding.FullName);
+
+        var subtitleLabel = new Label();
+        AppTheme.StyleSubtitleLabel(subtitleLabel, "Network interfaces · live status");
+
+        titleLabel.Location = new Point(0, 0);
+        subtitleLabel.Location = new Point(0, 22);
+        titleStack.Controls.Add(titleLabel);
+        titleStack.Controls.Add(subtitleLabel);
 
         var refreshButton = new Button
         {
             Text = "Refresh",
-            Size = new Size(72, 28),
-            FlatStyle = FlatStyle.System,
+            Size = new Size(88, 32),
             Anchor = AnchorStyles.Top | AnchorStyles.Right
         };
+        AppTheme.StyleAccentButton(refreshButton);
         refreshButton.Click += (_, _) => ForceRefresh(includeSlowDetails: true);
 
-        headerPanel.Controls.Add(titleLabel);
+        headerPanel.Controls.Add(accentMark);
+        headerPanel.Controls.Add(titleStack);
         headerPanel.Controls.Add(refreshButton);
         headerPanel.Resize += (_, _) =>
         {
-            refreshButton.Location = new Point(headerPanel.Width - refreshButton.Width - 12, 8);
+            refreshButton.Location = new Point(headerPanel.Width - refreshButton.Width - 20, 12);
         };
 
         _splitContainer = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            SplitterWidth = 6,
-            BackColor = Color.FromArgb(230, 230, 230),
+            SplitterWidth = 1,
             Panel1MinSize = 0,
             Panel2MinSize = 0
         };
+        AppTheme.StyleSplitContainer(_splitContainer);
 
         _interfaceList = new ListView
         {
@@ -86,37 +102,51 @@ public sealed class InterfacePopupForm : Form
             HideSelection = false,
             MultiSelect = false,
             HeaderStyle = ColumnHeaderStyle.Nonclickable,
-            BorderStyle = BorderStyle.None,
-            Font = new Font("Segoe UI", 9F)
+            OwnerDraw = true
         };
-        _interfaceList.Columns.Add("Interface", 120);
-        _interfaceList.Columns.Add("Address", 110);
-        _interfaceList.Columns.Add("Config", 60);
+        AppTheme.StyleListView(_interfaceList);
+        _interfaceList.Columns.Add("INTERFACE", 130);
+        _interfaceList.Columns.Add("ADDRESS", 120);
+        _interfaceList.Columns.Add("TYPE", 72);
+        _interfaceList.DrawColumnHeader += OnInterfaceListDrawColumnHeader;
+        _interfaceList.DrawSubItem += OnInterfaceListDrawSubItem;
         _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
 
         _splitContainer.Panel1.Controls.Add(_interfaceList);
-        _splitContainer.Panel1.BackColor = Color.White;
-        _splitContainer.Panel1.Padding = new Padding(8);
+        _splitContainer.Panel1.Padding = new Padding(12, 8, 8, 8);
 
         _detailPanel = new InterfaceDetailPanel();
         _splitContainer.Panel2.Controls.Add(_detailPanel);
-        _splitContainer.Panel2.BackColor = Color.White;
+
+        var statusPanel = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 32,
+            BackColor = AppTheme.Surface,
+            Padding = new Padding(0)
+        };
+        statusPanel.Paint += (_, e) =>
+        {
+            using var pen = new Pen(AppTheme.Border);
+            e.Graphics.DrawLine(pen, 0, 0, statusPanel.Width, 0);
+        };
 
         _statusLabel = new Label
         {
-            Dock = DockStyle.Bottom,
-            Height = 28,
-            ForeColor = Color.Gray,
+            Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(12, 0, 12, 0),
             Text = $"{AppBranding.ShortName} — loading…"
         };
+        AppTheme.StyleStatusLabel(_statusLabel);
+        statusPanel.Controls.Add(_statusLabel);
 
         SuspendLayout();
         Controls.Add(headerPanel);
-        Controls.Add(_statusLabel);
+        Controls.Add(statusPanel);
         Controls.Add(_splitContainer);
         ResumeLayout(false);
+
+        HandleCreated += (_, _) => DarkModeHelper.TryEnableDarkTitleBar(this);
 
         Load += (_, _) => ApplySnapshotToUi();
 
@@ -250,6 +280,82 @@ public sealed class InterfacePopupForm : Form
         {
             _splitContainer.SplitterDistance = maxDistance;
         }
+    }
+
+    private void OnInterfaceListDrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
+    {
+        e.DrawDefault = false;
+        using var bg = new SolidBrush(AppTheme.SurfaceRaised);
+        e.Graphics.FillRectangle(bg, e.Bounds);
+
+        using var pen = new Pen(AppTheme.Border);
+        e.Graphics.DrawLine(pen, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
+
+        var text = e.Header?.Text ?? string.Empty;
+        var rect = Rectangle.Inflate(e.Bounds, -10, 0);
+        TextRenderer.DrawText(
+            e.Graphics,
+            text,
+            AppTheme.FontCaption,
+            rect,
+            AppTheme.TextMuted,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+    }
+
+    private void OnInterfaceListDrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
+    {
+        e.DrawDefault = false;
+        var selected = e.Item?.Selected == true;
+        var focused = _interfaceList.Focused;
+        var bgColor = selected ? AppTheme.ListSelectionBackground(focused) : AppTheme.Surface;
+        var textColor = selected ? AppTheme.TextPrimary : AppTheme.TextSecondary;
+
+        using (var bg = new SolidBrush(bgColor))
+        {
+            e.Graphics.FillRectangle(bg, e.Bounds);
+        }
+
+        if (selected && e.ColumnIndex == 0)
+        {
+            using var accent = new SolidBrush(AppTheme.SelectionBar);
+            e.Graphics.FillRectangle(accent, e.Bounds.Left, e.Bounds.Top + 4, 3, e.Bounds.Height - 8);
+        }
+
+        if (e.SubItem is null)
+        {
+            return;
+        }
+
+        var text = e.SubItem.Text;
+        var font = AppTheme.FontBody;
+        var foreground = textColor;
+
+        if (e.ColumnIndex == 0 && text.EndsWith(" *", StringComparison.Ordinal))
+        {
+            text = text[..^2];
+            font = AppTheme.FontTitle;
+            foreground = AppTheme.TextPrimary;
+        }
+        else if (e.ColumnIndex == 2)
+        {
+            foreground = string.Equals(text, "DHCP", StringComparison.OrdinalIgnoreCase)
+                ? AppTheme.Green
+                : AppTheme.Orange;
+            font = AppTheme.FontCaption;
+        }
+        else if (e.ColumnIndex == 1)
+        {
+            font = AppTheme.ValueFont;
+        }
+
+        var textBounds = Rectangle.Inflate(e.Bounds, -12, 0);
+        TextRenderer.DrawText(
+            e.Graphics,
+            text,
+            font,
+            textBounds,
+            foreground,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
     }
 
     public void ForceClose()
