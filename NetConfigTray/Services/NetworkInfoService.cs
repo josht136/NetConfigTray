@@ -10,12 +10,16 @@ namespace NetConfigTray.Services;
 public sealed class NetworkInfoService
 {
     private readonly ConnectedDeviceService _connectedDeviceService = new();
+    private readonly WifiDetailsService _wifiDetailsService = new();
 
-    public IReadOnlyList<NetworkInterfaceInfo> GetActiveInterfaces(bool includeConnectedDevices = false)
+    public IReadOnlyList<NetworkInterfaceInfo> GetActiveInterfaces(
+        bool includeConnectedDevices = false,
+        bool includeWifiDetails = false)
     {
         var configurations = QueryIpConfigurations();
         var adapters = QueryAdapters();
-        var primaryInterfaceIndex = QueryPrimaryInterfaceIndex();
+        var routeMetrics = RouteMetricHelper.QueryMetricsByInterface();
+        var primaryInterfaceIndex = QueryPrimaryInterfaceIndex(routeMetrics);
         var results = new List<NetworkInterfaceInfo>();
 
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
@@ -45,6 +49,16 @@ public sealed class NetworkInfoService
             var gateway = GetGateway(ni);
             var stats = ni.GetIPv4Statistics();
             var interfaceIndex = ni.GetIPProperties().GetIPv4Properties()?.Index;
+            var wifiDetails = includeWifiDetails && ni.NetworkInterfaceType == NetworkInterfaceType.Wireless80211
+                ? _wifiDetailsService.GetDetails(name)
+                : null;
+
+            uint? routeMetric = null;
+            if (interfaceIndex is not null &&
+                routeMetrics.TryGetValue((uint)interfaceIndex.Value, out var metric))
+            {
+                routeMetric = metric;
+            }
 
             results.Add(new NetworkInterfaceInfo
             {
@@ -63,7 +77,15 @@ public sealed class NetworkInfoService
                 ConnectedDevice = includeConnectedDevices
                     ? _connectedDeviceService.GetConnectedDevice(ni, gateway, resolveHostname: true)
                     : null,
-                IsPrimary = interfaceIndex is not null && primaryInterfaceIndex == (uint)interfaceIndex.Value
+                IsPrimary = interfaceIndex is not null && primaryInterfaceIndex == (uint)interfaceIndex.Value,
+                Subnet = SubnetCalculatorHelper.Calculate(cidr),
+                DhcpServer = config.DhcpServer,
+                DhcpLeaseObtained = config.DhcpLeaseObtained,
+                DhcpLeaseExpires = config.DhcpLeaseExpires,
+                RouteMetric = routeMetric,
+                WifiChannel = wifiDetails?.Channel,
+                WifiBand = wifiDetails?.Band,
+                WifiRadioType = wifiDetails?.RadioType
             });
         }
 
@@ -116,7 +138,18 @@ public sealed class NetworkInfoService
             var gateway = GetGateway(ni);
             var stats = ni.GetIPv4Statistics();
             var interfaceIndex = ni.GetIPProperties().GetIPv4Properties()?.Index;
-            var primaryInterfaceIndex = QueryPrimaryInterfaceIndex();
+            var routeMetrics = RouteMetricHelper.QueryMetricsByInterface();
+            var primaryInterfaceIndex = QueryPrimaryInterfaceIndex(routeMetrics);
+            var wifiDetails = ni.NetworkInterfaceType == NetworkInterfaceType.Wireless80211
+                ? _wifiDetailsService.GetDetails(name)
+                : null;
+
+            uint? routeMetric = null;
+            if (interfaceIndex is not null &&
+                routeMetrics.TryGetValue((uint)interfaceIndex.Value, out var metric))
+            {
+                routeMetric = metric;
+            }
 
             return new NetworkInterfaceInfo
             {
@@ -133,7 +166,15 @@ public sealed class NetworkInfoService
                 BytesReceived = stats.BytesReceived,
                 BytesSent = stats.BytesSent,
                 ConnectedDevice = _connectedDeviceService.GetConnectedDevice(ni, gateway, resolveHostname: true),
-                IsPrimary = interfaceIndex is not null && primaryInterfaceIndex == (uint)interfaceIndex.Value
+                IsPrimary = interfaceIndex is not null && primaryInterfaceIndex == (uint)interfaceIndex.Value,
+                Subnet = SubnetCalculatorHelper.Calculate(cidr),
+                DhcpServer = config.DhcpServer,
+                DhcpLeaseObtained = config.DhcpLeaseObtained,
+                DhcpLeaseExpires = config.DhcpLeaseExpires,
+                RouteMetric = routeMetric,
+                WifiChannel = wifiDetails?.Channel,
+                WifiBand = wifiDetails?.Band,
+                WifiRadioType = wifiDetails?.RadioType
             };
         }
 
@@ -182,27 +223,17 @@ public sealed class NetworkInfoService
         return servers.Length == 0 ? "None" : string.Join(", ", servers);
     }
 
-    private static uint? QueryPrimaryInterfaceIndex()
+    private static uint? QueryPrimaryInterfaceIndex(IReadOnlyDictionary<uint, uint> routeMetrics)
     {
         uint? bestIndex = null;
         uint bestMetric = uint.MaxValue;
 
-        using var searcher = new ManagementObjectSearcher(
-            "SELECT InterfaceIndex, Metric1 FROM Win32_IP4RouteTable WHERE Destination='0.0.0.0' AND Mask='0.0.0.0'");
-
-        foreach (var obj in searcher.Get().Cast<ManagementObject>())
+        foreach (var (interfaceIndex, metric) in routeMetrics)
         {
-            var metric = ReadUInt32(obj["Metric1"]);
-            var interfaceIndex = ReadUInt32(obj["InterfaceIndex"]);
-            if (metric is null || interfaceIndex is null)
+            if (metric < bestMetric)
             {
-                continue;
-            }
-
-            if (metric.Value < bestMetric)
-            {
-                bestMetric = metric.Value;
-                bestIndex = interfaceIndex.Value;
+                bestMetric = metric;
+                bestIndex = interfaceIndex;
             }
         }
 
@@ -393,7 +424,7 @@ public sealed class NetworkInfoService
         var configurations = new Dictionary<uint, ConfigurationInfo>();
 
         using var searcher = new ManagementObjectSearcher(
-            "SELECT Index, Description, DHCPEnabled, IPAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE");
+            "SELECT Index, Description, DHCPEnabled, IPAddress, DHCPServer, DhcpLeaseObtained, DhcpLeaseExpires FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE");
 
         foreach (var obj in searcher.Get().Cast<ManagementObject>())
         {
@@ -406,8 +437,17 @@ public sealed class NetworkInfoService
             var dhcpEnabled = obj["DHCPEnabled"] is true;
             var description = obj["Description"] as string ?? string.Empty;
             var ipAddresses = (obj["IPAddress"] as string[]) ?? Array.Empty<string>();
+            var dhcpServer = (obj["DHCPServer"] as string[])?.FirstOrDefault();
+            var leaseObtained = WmiDateTimeHelper.Format(obj["DhcpLeaseObtained"]);
+            var leaseExpires = WmiDateTimeHelper.Format(obj["DhcpLeaseExpires"]);
 
-            configurations[index.Value] = new ConfigurationInfo(dhcpEnabled, description, ipAddresses);
+            configurations[index.Value] = new ConfigurationInfo(
+                dhcpEnabled,
+                description,
+                ipAddresses,
+                dhcpServer,
+                leaseObtained,
+                leaseExpires);
         }
 
         return configurations;
@@ -447,5 +487,11 @@ public sealed class NetworkInfoService
         string Guid,
         string Description);
 
-    private readonly record struct ConfigurationInfo(bool DhcpEnabled, string Description, string[] IpAddresses);
+    private readonly record struct ConfigurationInfo(
+        bool DhcpEnabled,
+        string Description,
+        string[] IpAddresses,
+        string? DhcpServer,
+        string? DhcpLeaseObtained,
+        string? DhcpLeaseExpires);
 }

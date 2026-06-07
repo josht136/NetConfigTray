@@ -1,20 +1,22 @@
 using NetConfigTray.Forms;
 using NetConfigTray.Helpers;
+using NetConfigTray.Models;
 using NetConfigTray.Services;
 
 namespace NetConfigTray;
 
 public sealed class TrayApplicationContext : ApplicationContext
 {
-    private readonly NetworkSnapshotService _snapshotService = new();
-    private readonly ThroughputMonitorService _throughputMonitorService = new();
+    private readonly AppServices _services = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _autostartMenuItem;
+    private readonly ToolStripMenuItem _notificationsMenuItem;
     private readonly Form _hostForm;
     private readonly System.Windows.Forms.Timer _trayRefreshTimer;
-    private InterfacePopupForm? _popupForm;
+    private InterfacePopupForm? _mainWindow;
     private bool _isExiting;
     private Icon? _currentTrayIcon;
+    private IpConfigurationType? _lastTrayConfigType;
 
     public TrayApplicationContext()
     {
@@ -43,9 +45,16 @@ public sealed class TrayApplicationContext : ApplicationContext
             _autostartMenuItem.Checked = true;
         }
 
+        _notificationsMenuItem = new ToolStripMenuItem("Change notifications")
+        {
+            CheckOnClick = true,
+            Checked = true
+        };
+
         var contextMenu = new ContextMenuStrip();
-        contextMenu.Items.Add(new ToolStripMenuItem("Open", null, (_, _) => ShowPopup()));
+        contextMenu.Items.Add(new ToolStripMenuItem($"Open {AppBranding.ShortName}", null, (_, _) => ShowMainWindow()));
         contextMenu.Items.Add(_autostartMenuItem);
+        contextMenu.Items.Add(_notificationsMenuItem);
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => Exit()));
 
@@ -53,20 +62,23 @@ public sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon = new NotifyIcon
         {
             Icon = _currentTrayIcon,
-            Text = "NetConfigTray — Network IP & DHCP status",
+            Text = $"{AppBranding.ShortName} — Network status",
             Visible = true,
             ContextMenuStrip = contextMenu
         };
 
         _notifyIcon.MouseClick += OnNotifyIconMouseClick;
-        _snapshotService.SnapshotUpdated += UpdateTrayFromSnapshot;
+        _services.Snapshot.SnapshotUpdated += UpdateTrayFromSnapshot;
 
         _trayRefreshTimer = new System.Windows.Forms.Timer { Interval = 5000 };
         _trayRefreshTimer.Tick += (_, _) =>
-            _snapshotService.EnsureFresh(TimeSpan.FromSeconds(4));
+        {
+            _services.PublicIp.RefreshAsync();
+            _services.Snapshot.EnsureFresh(TimeSpan.FromSeconds(4));
+        };
         _trayRefreshTimer.Start();
 
-        _snapshotService.RequestRefresh(includeConnectedDevices: false);
+        _services.Snapshot.RequestRefresh(includeSlowDetails: false);
     }
 
     private void UpdateTrayFromSnapshot()
@@ -76,19 +88,57 @@ public sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
+        if (_hostForm.InvokeRequired)
+        {
+            try
+            {
+                _hostForm.BeginInvoke(UpdateTrayFromSnapshot);
+            }
+            catch (InvalidOperationException)
+            {
+                // Host form is closing.
+            }
+
+            return;
+        }
+
         try
         {
-            var primary = _snapshotService.GetPrimaryInterface();
+            var interfaces = _services.Snapshot.GetSnapshot();
+            var primary = _services.Snapshot.GetPrimaryInterface();
+
+            if (_notificationsMenuItem.Checked)
+            {
+                var changes = _services.ChangeNotifier.DetectChanges(interfaces);
+                if (changes.Count > 0)
+                {
+                    var message = changes.Count == 1
+                        ? changes[0]
+                        : string.Join(Environment.NewLine, changes.Take(3));
+
+                    _notifyIcon.ShowBalloonTip(4000, AppBranding.ShortName, message, ToolTipIcon.Info);
+                }
+            }
+
             var configType = primary?.ConfigurationType;
-            var newIcon = AppIconHelper.CreateTrayIcon(configType);
+            if (configType != _lastTrayConfigType || _currentTrayIcon is null)
+            {
+                var newIcon = AppIconHelper.CreateTrayIcon(configType);
+                _notifyIcon.Icon = newIcon;
+                _currentTrayIcon?.Dispose();
+                _currentTrayIcon = newIcon;
+                _lastTrayConfigType = configType;
+            }
 
-            _notifyIcon.Icon = newIcon;
-            _currentTrayIcon?.Dispose();
-            _currentTrayIcon = newIcon;
-
-            _notifyIcon.Text = primary is not null
-                ? $"{primary.Name}: {primary.IPv4Address} ({primary.ConfigurationLabel})"
-                : "NetConfigTray — No active interface";
+            if (primary is not null)
+            {
+                var publicIp = _services.PublicIp.GetDisplayText();
+                _notifyIcon.Text = $"{AppBranding.ShortName}: {primary.Name} {primary.IPv4Address} ({primary.ConfigurationLabel}) · {publicIp}";
+            }
+            else
+            {
+                _notifyIcon.Text = $"{AppBranding.ShortName} — No active interface";
+            }
         }
         catch
         {
@@ -100,42 +150,37 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (e.Button == MouseButtons.Left)
         {
-            ShowPopup();
+            ShowMainWindow();
         }
     }
 
-    private void ShowPopup()
+    private void ShowMainWindow()
     {
         if (_isExiting)
         {
             return;
         }
 
-        EnsurePopupForm();
+        EnsureMainWindow();
+        _mainWindow!.ShowMainWindow();
+    }
 
-        if (!_popupForm!.ShowNearTray())
+    private void EnsureMainWindow()
+    {
+        if (_mainWindow is null || _mainWindow.IsDisposed)
         {
-            RecreatePopupForm();
-            _popupForm.ShowNearTray();
+            RecreateMainWindow();
         }
     }
 
-    private void EnsurePopupForm()
+    private void RecreateMainWindow()
     {
-        if (_popupForm is null || _popupForm.IsDisposed)
+        if (_mainWindow is { IsDisposed: false })
         {
-            RecreatePopupForm();
-        }
-    }
-
-    private void RecreatePopupForm()
-    {
-        if (_popupForm is { IsDisposed: false })
-        {
-            _popupForm.Dispose();
+            _mainWindow.Dispose();
         }
 
-        _popupForm = new InterfacePopupForm(_snapshotService, _throughputMonitorService);
+        _mainWindow = new InterfacePopupForm(_services);
     }
 
     private void Exit()
@@ -151,13 +196,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
 
-        if (_popupForm is { IsDisposed: false })
+        if (_mainWindow is { IsDisposed: false })
         {
-            _popupForm.Dispose();
+            _mainWindow.ForceClose();
+            _mainWindow.Dispose();
         }
 
-        _popupForm = null;
+        _mainWindow = null;
         _currentTrayIcon?.Dispose();
+        _services.Dispose();
         _hostForm.Close();
         ExitThread();
     }
@@ -169,10 +216,11 @@ public sealed class TrayApplicationContext : ApplicationContext
             _trayRefreshTimer.Dispose();
             _notifyIcon.Dispose();
             _currentTrayIcon?.Dispose();
+            _services.Dispose();
 
-            if (_popupForm is { IsDisposed: false })
+            if (_mainWindow is { IsDisposed: false })
             {
-                _popupForm.Dispose();
+                _mainWindow.Dispose();
             }
 
             if (!_hostForm.IsDisposed)

@@ -1,9 +1,13 @@
+using System.Runtime.InteropServices;
 using NetConfigTray.Models;
 
 namespace NetConfigTray.Helpers;
 
 public static class AppIconHelper
 {
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern bool DestroyIcon(IntPtr handle);
+
     public static Icon CreateTrayIcon(IpConfigurationType? configurationType = null)
     {
         const int size = 32;
@@ -50,7 +54,14 @@ public static class AppIconHelper
         }
 
         var handle = bitmap.GetHicon();
-        var icon = Icon.FromHandle(handle);
-        return (Icon)icon.Clone();
+        try
+        {
+            using var tempIcon = Icon.FromHandle(handle);
+            return (Icon)tempIcon.Clone();
+        }
+        finally
+        {
+            DestroyIcon(handle);
+        }
     }
 }

@@ -14,6 +14,12 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, args) =>
+        {
+            System.Diagnostics.Debug.WriteLine(args.Exception);
+        };
+
         Application.Run(new TrayApplicationContext());
     }
 }
