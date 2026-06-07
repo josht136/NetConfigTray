@@ -31,4 +31,12 @@
     <PackageReference Include="PacketDotNet" Version="1.4.8" />
   </ItemGroup>
 
+  <!-- Bundle native tools (iperf3.exe) next to the app. -->
+  <ItemGroup>
+    <None Include="tools/**/*" Exclude="tools/**/*.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
+  </ItemGroup>
+
 </Project>
