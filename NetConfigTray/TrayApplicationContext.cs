@@ -1,5 +1,6 @@
 using NetConfigTray.Forms;
 using NetConfigTray.Helpers;
+using NetConfigTray.Models;
 using NetConfigTray.Services;
 
 namespace NetConfigTray;
