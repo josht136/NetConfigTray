@@ -25,6 +25,8 @@
 
   <ItemGroup>
     <PackageReference Include="System.Management" Version="9.0.0" />
+    <PackageReference Include="System.IO.Ports" Version="9.0.0" />
+    <PackageReference Include="SSH.NET" Version="2025.0.0" />
   </ItemGroup>
 
 </Project>
