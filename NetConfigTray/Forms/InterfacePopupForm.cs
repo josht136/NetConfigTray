@@ -7,6 +7,7 @@ namespace NetConfigTray.Forms;
 public sealed class InterfacePopupForm : Form
 {
     private readonly AppServices _services;
+    private readonly SplitContainer _splitContainer;
     private readonly ListView _interfaceList;
     private readonly InterfaceDetailPanel _detailPanel;
     private readonly Label _statusLabel;
@@ -66,14 +67,13 @@ public sealed class InterfacePopupForm : Form
             refreshButton.Location = new Point(headerPanel.Width - refreshButton.Width - 12, 8);
         };
 
-        var splitContainer = new SplitContainer
+        _splitContainer = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            SplitterDistance = 220,
             SplitterWidth = 6,
             BackColor = Color.FromArgb(230, 230, 230),
-            Panel1MinSize = 160,
-            Panel2MinSize = 280
+            Panel1MinSize = 0,
+            Panel2MinSize = 0
         };
 
         _interfaceList = new ListView
@@ -91,13 +91,13 @@ public sealed class InterfacePopupForm : Form
         _interfaceList.Columns.Add("Address", 100);
         _interfaceList.SelectedIndexChanged += (_, _) => OnInterfaceSelected();
 
-        splitContainer.Panel1.Controls.Add(_interfaceList);
-        splitContainer.Panel1.BackColor = Color.White;
-        splitContainer.Panel1.Padding = new Padding(8);
+        _splitContainer.Panel1.Controls.Add(_interfaceList);
+        _splitContainer.Panel1.BackColor = Color.White;
+        _splitContainer.Panel1.Padding = new Padding(8);
 
         _detailPanel = new InterfaceDetailPanel();
-        splitContainer.Panel2.Controls.Add(_detailPanel);
-        splitContainer.Panel2.BackColor = Color.White;
+        _splitContainer.Panel2.Controls.Add(_detailPanel);
+        _splitContainer.Panel2.BackColor = Color.White;
 
         _statusLabel = new Label
         {
@@ -109,9 +109,13 @@ public sealed class InterfacePopupForm : Form
             Text = $"{AppBranding.ShortName} — loading…"
         };
 
-        Controls.Add(splitContainer);
-        Controls.Add(_statusLabel);
+        SuspendLayout();
         Controls.Add(headerPanel);
+        Controls.Add(_statusLabel);
+        Controls.Add(_splitContainer);
+        ResumeLayout(false);
+
+        Load += (_, _) => ConfigureSplitterLayout();
 
         _fastRefreshTimer = new System.Windows.Forms.Timer { Interval = 2000 };
         _fastRefreshTimer.Tick += (_, _) => UpdateThroughputOnly();
@@ -123,6 +127,7 @@ public sealed class InterfacePopupForm : Form
 
         Shown += (_, _) =>
         {
+            ConfigureSplitterLayout();
             _services.PublicIp.RefreshAsync();
             ForceRefresh(includeSlowDetails: false);
             _fastRefreshTimer.Start();
@@ -159,7 +164,39 @@ public sealed class InterfacePopupForm : Form
         WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
+        ConfigureSplitterLayout();
         ForceRefresh(includeSlowDetails: false);
+    }
+
+    private void ConfigureSplitterLayout()
+    {
+        if (_splitContainer.IsDisposed || _splitContainer.Width <= 0)
+        {
+            return;
+        }
+
+        const int panel1Min = 140;
+        const int panel2Min = 240;
+        const int preferredDistance = 220;
+
+        _splitContainer.Panel1MinSize = 0;
+        _splitContainer.Panel2MinSize = 0;
+
+        var maxDistance = _splitContainer.Width - _splitContainer.SplitterWidth;
+        _splitContainer.SplitterDistance = Math.Clamp(
+            preferredDistance,
+            0,
+            Math.Max(0, maxDistance));
+
+        if (maxDistance < panel1Min + panel2Min)
+        {
+            return;
+        }
+
+        _splitContainer.Panel1MinSize = panel1Min;
+        _splitContainer.Panel2MinSize = panel2Min;
+        maxDistance = _splitContainer.Width - panel2Min - _splitContainer.SplitterWidth;
+        _splitContainer.SplitterDistance = Math.Clamp(preferredDistance, panel1Min, maxDistance);
     }
 
     public void ForceClose()
