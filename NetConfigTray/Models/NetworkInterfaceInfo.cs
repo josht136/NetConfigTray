@@ -31,11 +31,28 @@ public sealed record NetworkInterfaceInfo
     public uint? RouteMetric { get; init; }
     public string? ConnectionUptime { get; init; }
     public string? GatewayPing { get; init; }
+    public string? DnsPing { get; init; }
     public string? WifiChannel { get; init; }
     public string? WifiBand { get; init; }
     public string? WifiRadioType { get; init; }
 
     public string ConfigurationLabel => ConfigurationType == IpConfigurationType.Dhcp ? "DHCP" : "Static";
+
+    /// <summary>The first IPv4 DNS server, or empty if none is configured.</summary>
+    public string PrimaryDns
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(DnsServers) || DnsServers == "None")
+            {
+                return string.Empty;
+            }
+
+            var first = DnsServers.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault();
+            return first ?? string.Empty;
+        }
+    }
 
     public string ChangeSignature =>
         $"{Id}|{IPv4Address}|{ConfigurationType}|{Gateway}|{DhcpLeaseExpires}|{WifiChannel}";

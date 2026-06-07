@@ -9,6 +9,7 @@ public sealed class InterfacePopupForm : Form
     private readonly AppServices _services;
     private readonly SplitContainer _splitContainer;
     private readonly ListView _interfaceList;
+    private readonly ThroughputSparklineControl _sparkline;
     private readonly InterfaceDetailPanel _detailPanel;
     private readonly Label _statusLabel;
     private readonly System.Windows.Forms.Timer _fastRefreshTimer;
@@ -114,7 +115,15 @@ public sealed class InterfacePopupForm : Form
         _interfaceList.DrawSubItem += OnInterfaceListDrawSubItem;
         _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
 
+        _sparkline = new ThroughputSparklineControl
+        {
+            Dock = DockStyle.Bottom,
+            Height = 108
+        };
+
+        // Add the Fill control (list) first so the docked sparkline reserves bottom space.
         _splitContainer.Panel1.Controls.Add(_interfaceList);
+        _splitContainer.Panel1.Controls.Add(_sparkline);
         _splitContainer.Panel1.Padding = new Padding(8, 10, 4, 10);
         _splitContainer.Panel1.Resize += (_, _) => ResizeInterfaceListColumns();
 
@@ -441,20 +450,32 @@ public sealed class InterfacePopupForm : Form
         _services.Snapshot.RequestRefresh(includeSlowDetails);
     }
 
-    private void OnGatewayPingUpdated(string gateway)
+    private void OnGatewayPingUpdated(string host)
     {
         RunOnUiThread(() =>
         {
             if (string.IsNullOrWhiteSpace(_selectedInterfaceId) ||
-                !_interfacesById.TryGetValue(_selectedInterfaceId, out var info) ||
-                !string.Equals(info.Gateway, gateway, StringComparison.OrdinalIgnoreCase))
+                !_interfacesById.TryGetValue(_selectedInterfaceId, out var info))
+            {
+                return;
+            }
+
+            var primaryDns = info.PrimaryDns;
+            var matchesGateway = string.Equals(info.Gateway, host, StringComparison.OrdinalIgnoreCase);
+            var matchesDns = !string.IsNullOrWhiteSpace(primaryDns)
+                && string.Equals(primaryDns, host, StringComparison.OrdinalIgnoreCase);
+
+            if (!matchesGateway && !matchesDns)
             {
                 return;
             }
 
             var updated = info with
             {
-                GatewayPing = _services.GatewayPing.GetLatencyText(gateway)
+                GatewayPing = _services.GatewayPing.GetLatencyText(info.Gateway),
+                DnsPing = string.IsNullOrWhiteSpace(primaryDns)
+                    ? "No DNS"
+                    : _services.GatewayPing.GetLatencyText(primaryDns)
             };
             _interfacesById[_selectedInterfaceId] = updated;
             _detailPanel.UpdateLiveFields(updated);
@@ -634,7 +655,9 @@ public sealed class InterfacePopupForm : Form
 
             _services.ThroughputHistory.AddSample(info.Id, downloadBps, uploadBps);
             var history = _services.ThroughputHistory.GetDownloadHistory(info.Id);
-            _detailPanel.Bind(info, downloadBps, uploadBps, history);
+            _detailPanel.Bind(info, downloadBps, uploadBps);
+            _sparkline.SetTitle($"{info.Name} · DOWNLOAD");
+            _sparkline.Update(history, downloadBps);
         }
         catch (Exception ex)
         {
@@ -685,11 +708,19 @@ public sealed class InterfacePopupForm : Form
     private NetworkInterfaceInfo EnrichInterface(NetworkInterfaceInfo info)
     {
         _services.GatewayPing.QueuePing(info.Gateway);
+        var primaryDns = info.PrimaryDns;
+        if (!string.IsNullOrWhiteSpace(primaryDns))
+        {
+            _services.GatewayPing.QueuePing(primaryDns);
+        }
 
         return info with
         {
             ConnectionUptime = _services.Uptime.GetUptimeText(info.Id, isActive: true),
-            GatewayPing = _services.GatewayPing.GetLatencyText(info.Gateway)
+            GatewayPing = _services.GatewayPing.GetLatencyText(info.Gateway),
+            DnsPing = string.IsNullOrWhiteSpace(primaryDns)
+                ? "No DNS"
+                : _services.GatewayPing.GetLatencyText(primaryDns)
         };
     }
 
@@ -724,17 +755,24 @@ public sealed class InterfacePopupForm : Form
             counts.BytesSent);
 
         _services.ThroughputHistory.AddSample(_selectedInterfaceId, downloadBps, uploadBps);
-        _detailPanel.UpdateThroughput(
-            downloadBps,
-            uploadBps,
-            _services.ThroughputHistory.GetDownloadHistory(_selectedInterfaceId));
+        _detailPanel.UpdateThroughput(downloadBps, uploadBps);
+        _sparkline.Update(_services.ThroughputHistory.GetDownloadHistory(_selectedInterfaceId), downloadBps);
 
         if (_interfacesById.TryGetValue(_selectedInterfaceId, out var refreshed))
         {
+            var primaryDns = refreshed.PrimaryDns;
+            if (!string.IsNullOrWhiteSpace(primaryDns))
+            {
+                _services.GatewayPing.QueuePing(primaryDns);
+            }
+
             refreshed = refreshed with
             {
                 ConnectionUptime = _services.Uptime.GetUptimeText(_selectedInterfaceId, isActive: true),
-                GatewayPing = _services.GatewayPing.GetLatencyText(refreshed.Gateway)
+                GatewayPing = _services.GatewayPing.GetLatencyText(refreshed.Gateway),
+                DnsPing = string.IsNullOrWhiteSpace(primaryDns)
+                    ? "No DNS"
+                    : _services.GatewayPing.GetLatencyText(primaryDns)
             };
             _interfacesById[_selectedInterfaceId] = refreshed;
             _detailPanel.UpdateLiveFields(refreshed);
