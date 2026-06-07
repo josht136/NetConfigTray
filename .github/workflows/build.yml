@@ -1,0 +1,41 @@
+name: Build Windows Release
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore NetConfigTray.sln
+
+      - name: Build
+        run: dotnet build NetConfigTray.sln -c Release --no-restore
+
+      - name: Publish self-contained executable
+        run: >
+          dotnet publish NetConfigTray/NetConfigTray.csproj
+          -c Release
+          -r win-x64
+          --self-contained false
+          -p:PublishSingleFile=true
+          -o publish/win-x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetConfigTray-win-x64
+          path: publish/win-x64/
