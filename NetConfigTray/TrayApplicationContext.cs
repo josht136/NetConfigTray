@@ -1,5 +1,6 @@
 using NetConfigTray.Forms;
 using NetConfigTray.Helpers;
+using NetConfigTray.Models;
 using NetConfigTray.Services;
 
 namespace NetConfigTray;
@@ -8,14 +9,18 @@ public sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly NotifyIcon _notifyIcon;
     private readonly NetworkInfoService _networkInfoService;
+    private readonly ThroughputMonitorService _throughputMonitorService;
     private readonly ToolStripMenuItem _autostartMenuItem;
     private readonly Form _hostForm;
+    private readonly System.Windows.Forms.Timer _trayRefreshTimer;
     private InterfacePopupForm? _popupForm;
     private bool _isExiting;
+    private Icon? _currentTrayIcon;
 
     public TrayApplicationContext()
     {
         _networkInfoService = new NetworkInfoService();
+        _throughputMonitorService = new ThroughputMonitorService();
 
         _hostForm = new Form
         {
@@ -48,15 +53,53 @@ public sealed class TrayApplicationContext : ApplicationContext
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => Exit()));
 
+        _currentTrayIcon = AppIconHelper.CreateTrayIcon();
         _notifyIcon = new NotifyIcon
         {
-            Icon = AppIconHelper.CreateTrayIcon(),
+            Icon = _currentTrayIcon,
             Text = "NetConfigTray — Network IP & DHCP status",
             Visible = true,
             ContextMenuStrip = contextMenu
         };
 
         _notifyIcon.MouseClick += OnNotifyIconMouseClick;
+
+        _trayRefreshTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+        _trayRefreshTimer.Tick += (_, _) => RefreshTrayIcon();
+        _trayRefreshTimer.Start();
+        RefreshTrayIcon();
+    }
+
+    private void RefreshTrayIcon()
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        try
+        {
+            var primary = _networkInfoService.GetPrimaryInterface();
+            var configType = primary?.ConfigurationType;
+            var newIcon = AppIconHelper.CreateTrayIcon(configType);
+
+            _notifyIcon.Icon = newIcon;
+            _currentTrayIcon?.Dispose();
+            _currentTrayIcon = newIcon;
+
+            if (primary is not null)
+            {
+                _notifyIcon.Text = $"{primary.Name}: {primary.IPv4Address} ({primary.ConfigurationLabel})";
+            }
+            else
+            {
+                _notifyIcon.Text = "NetConfigTray — No active interface";
+            }
+        }
+        catch
+        {
+            // Keep the previous icon if refresh fails.
+        }
     }
 
     private void OnNotifyIconMouseClick(object? sender, MouseEventArgs e)
@@ -98,7 +141,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _popupForm.Dispose();
         }
 
-        _popupForm = new InterfacePopupForm(_networkInfoService);
+        _popupForm = new InterfacePopupForm(_networkInfoService, _throughputMonitorService);
     }
 
     private void Exit()
@@ -109,6 +152,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         _isExiting = true;
+        _trayRefreshTimer.Stop();
+        _trayRefreshTimer.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
 
@@ -118,6 +163,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         _popupForm = null;
+        _currentTrayIcon?.Dispose();
         _hostForm.Close();
         ExitThread();
     }
@@ -126,7 +172,9 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (disposing && !_isExiting)
         {
+            _trayRefreshTimer.Dispose();
             _notifyIcon.Dispose();
+            _currentTrayIcon?.Dispose();
 
             if (_popupForm is { IsDisposed: false })
             {

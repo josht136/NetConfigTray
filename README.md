@@ -4,12 +4,14 @@ A lightweight Windows system tray app that shows active network interfaces with 
 
 ## Features
 
-- **System tray icon** — runs in the notification area with no taskbar window
+- **System tray icon** — shows **D** (DHCP) or **S** (Static) for the primary interface
 - **Click to view** — left-click the tray icon to open a popup with interface details
-- **Per-interface info** — name (e.g. Ethernet, Wi-Fi), primary IPv4, and Static/DHCP status
+- **Per-interface info** — name, IPv4, Static/DHCP, and expandable details
+- **Interface details** — CIDR, MAC, link speed, live upload/download, gateway, DNS
+- **Connected device** — upstream gateway on Ethernet; AP BSSID/SSID/signal on Wi-Fi
+- **Copy support** — copy individual fields or all details for an interface
 - **Auto-refresh** — updates every 2 seconds while the popup is open
 - **Manual refresh** — Refresh button for on-demand updates
-- **Visual status** — DHCP (green badge) and Static (orange badge) are color-coded
 - **Exit** — right-click the tray icon → Exit
 - **Start with Windows** — enabled by default; toggle via right-click context menu
 

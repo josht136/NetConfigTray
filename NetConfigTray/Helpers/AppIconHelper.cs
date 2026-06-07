@@ -1,27 +1,53 @@
+using NetConfigTray.Models;
+
 namespace NetConfigTray.Helpers;
 
 public static class AppIconHelper
 {
-    public static Icon CreateTrayIcon()
+    public static Icon CreateTrayIcon(IpConfigurationType? configurationType = null)
     {
         const int size = 32;
         using var bitmap = new Bitmap(size, size);
         using var graphics = Graphics.FromImage(bitmap);
         graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
         graphics.Clear(Color.Transparent);
 
-        using var backgroundBrush = new SolidBrush(Color.FromArgb(0, 120, 215));
-        graphics.FillEllipse(backgroundBrush, 2, 2, size - 4, size - 4);
-
-        using var pen = new Pen(Color.White, 2.5f)
+        var backgroundColor = configurationType switch
         {
-            StartCap = System.Drawing.Drawing2D.LineCap.Round,
-            EndCap = System.Drawing.Drawing2D.LineCap.Round
+            IpConfigurationType.Dhcp => Color.FromArgb(16, 124, 16),
+            IpConfigurationType.Static => Color.FromArgb(202, 80, 16),
+            _ => Color.FromArgb(0, 120, 215)
         };
 
-        graphics.DrawArc(pen, 8, 10, 16, 12, 180, 180);
-        graphics.DrawLine(pen, 8, 16, 12, 20);
-        graphics.DrawLine(pen, 24, 16, 20, 20);
+        using var backgroundBrush = new SolidBrush(backgroundColor);
+        graphics.FillEllipse(backgroundBrush, 2, 2, size - 4, size - 4);
+
+        if (configurationType is null)
+        {
+            using var pen = new Pen(Color.White, 2.5f)
+            {
+                StartCap = System.Drawing.Drawing2D.LineCap.Round,
+                EndCap = System.Drawing.Drawing2D.LineCap.Round
+            };
+
+            graphics.DrawArc(pen, 8, 10, 16, 12, 180, 180);
+            graphics.DrawLine(pen, 8, 16, 12, 20);
+            graphics.DrawLine(pen, 24, 16, 20, 20);
+        }
+        else
+        {
+            var letter = configurationType == IpConfigurationType.Dhcp ? "D" : "S";
+            using var font = new Font("Segoe UI", 14f, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var textBrush = new SolidBrush(Color.White);
+            var textSize = graphics.MeasureString(letter, font);
+            graphics.DrawString(
+                letter,
+                font,
+                textBrush,
+                (size - textSize.Width) / 2f,
+                (size - textSize.Height) / 2f - 1f);
+        }
 
         var handle = bitmap.GetHicon();
         var icon = Icon.FromHandle(handle);

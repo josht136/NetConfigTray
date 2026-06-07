@@ -5,19 +5,19 @@ namespace NetConfigTray.Forms;
 
 public sealed class InterfacePopupForm : Form
 {
-    private static readonly Color DhcpColor = Color.FromArgb(16, 124, 16);
-    private static readonly Color StaticColor = Color.FromArgb(202, 80, 16);
-    private static readonly Color DhcpBackground = Color.FromArgb(223, 246, 221);
-    private static readonly Color StaticBackground = Color.FromArgb(255, 236, 224);
-
     private readonly NetworkInfoService _networkInfoService;
+    private readonly ThroughputMonitorService _throughputMonitorService;
     private readonly FlowLayoutPanel _interfacePanel;
     private readonly Label _statusLabel;
     private readonly System.Windows.Forms.Timer _refreshTimer;
+    private readonly HashSet<string> _expandedInterfaceIds = new(StringComparer.OrdinalIgnoreCase);
 
-    public InterfacePopupForm(NetworkInfoService networkInfoService)
+    public InterfacePopupForm(
+        NetworkInfoService networkInfoService,
+        ThroughputMonitorService throughputMonitorService)
     {
         _networkInfoService = networkInfoService;
+        _throughputMonitorService = throughputMonitorService;
 
         Text = "NetConfigTray";
         FormBorderStyle = FormBorderStyle.FixedToolWindow;
@@ -25,7 +25,7 @@ public sealed class InterfacePopupForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        ClientSize = new Size(360, 280);
+        ClientSize = new Size(420, 360);
         BackColor = Color.White;
         Font = new Font("Segoe UI", 9F);
         Padding = new Padding(12);
@@ -76,7 +76,7 @@ public sealed class InterfacePopupForm : Form
             Height = 22,
             ForeColor = Color.Gray,
             TextAlign = ContentAlignment.MiddleLeft,
-            Text = "Auto-refreshes every 2 seconds"
+            Text = "Click an interface for details · auto-refresh every 2s"
         };
 
         Controls.Add(_interfacePanel);
@@ -165,7 +165,7 @@ public sealed class InterfacePopupForm : Form
         try
         {
             interfaces = _networkInfoService.GetActiveInterfaces();
-            _statusLabel.Text = $"Updated {DateTime.Now:t} · auto-refresh every 2s";
+            _statusLabel.Text = $"Updated {DateTime.Now:t} · click interface for details";
         }
         catch (Exception ex)
         {
@@ -190,64 +190,37 @@ public sealed class InterfacePopupForm : Form
         {
             foreach (var info in interfaces)
             {
-                _interfacePanel.Controls.Add(CreateInterfaceCard(info));
+                var (downloadBps, uploadBps) = _throughputMonitorService.GetThroughput(
+                    info.Id,
+                    info.BytesReceived,
+                    info.BytesSent);
+
+                var card = new InterfaceCardPanel(_interfacePanel.ClientSize.Width - 28)
+                {
+                    Tag = info.Id
+                };
+                card.ExpandedChanged += (_, _) =>
+                {
+                    if (card.Tag is not string id)
+                    {
+                        return;
+                    }
+
+                    if (card.IsExpanded)
+                    {
+                        _expandedInterfaceIds.Add(id);
+                    }
+                    else
+                    {
+                        _expandedInterfaceIds.Remove(id);
+                    }
+                };
+                card.Bind(info, downloadBps, uploadBps, _expandedInterfaceIds.Contains(info.Id));
+                _interfacePanel.Controls.Add(card);
             }
         }
 
         _interfacePanel.ResumeLayout(performLayout: true);
-    }
-
-    private Control CreateInterfaceCard(NetworkInterfaceInfo info)
-    {
-        var isDhcp = info.ConfigurationType == IpConfigurationType.Dhcp;
-        var badgeColor = isDhcp ? DhcpColor : StaticColor;
-        var badgeBackground = isDhcp ? DhcpBackground : StaticBackground;
-
-        var card = new Panel
-        {
-            Width = _interfacePanel.ClientSize.Width - 28,
-            Height = 72,
-            BackColor = Color.FromArgb(248, 248, 248),
-            Margin = new Padding(0, 0, 0, 8),
-            Padding = new Padding(12, 10, 12, 10)
-        };
-
-        var nameLabel = new Label
-        {
-            Text = info.Name,
-            Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold),
-            AutoSize = true,
-            Location = new Point(0, 0)
-        };
-
-        var ipLabel = new Label
-        {
-            Text = info.IPv4Address,
-            Font = new Font("Segoe UI", 10F),
-            ForeColor = Color.FromArgb(50, 50, 50),
-            AutoSize = true,
-            Location = new Point(0, 24)
-        };
-
-        var badge = new Label
-        {
-            Text = info.ConfigurationLabel,
-            Font = new Font("Segoe UI Semibold", 8.5F, FontStyle.Bold),
-            ForeColor = badgeColor,
-            BackColor = badgeBackground,
-            AutoSize = false,
-            Size = new Size(56, 22),
-            TextAlign = ContentAlignment.MiddleCenter,
-            Location = new Point(card.Width - 68, 0)
-        };
-
-        card.Controls.Add(nameLabel);
-        card.Controls.Add(ipLabel);
-        card.Controls.Add(badge);
-
-        card.Resize += (_, _) => badge.Location = new Point(card.Width - 68, 0);
-
-        return card;
     }
 
     protected override void Dispose(bool disposing)
