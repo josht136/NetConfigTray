@@ -105,9 +105,8 @@ public sealed class InterfacePopupForm : Form
             OwnerDraw = true
         };
         AppTheme.StyleListView(_interfaceList);
-        _interfaceList.Columns.Add("INTERFACE", 130);
-        _interfaceList.Columns.Add("ADDRESS", 120);
-        _interfaceList.Columns.Add("TYPE", 72);
+        _interfaceList.Columns.Add("INTERFACE", 220);
+        _interfaceList.Columns.Add("TYPE", 64);
         _interfaceList.DrawColumnHeader += OnInterfaceListDrawColumnHeader;
         _interfaceList.DrawSubItem += OnInterfaceListDrawSubItem;
         _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
@@ -212,7 +211,7 @@ public sealed class InterfacePopupForm : Form
         WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
-        if (_splitContainer.Panel1.Width < 220)
+        if (_splitContainer.Panel1.Width < 300)
         {
             _splitterInitialized = false;
         }
@@ -261,11 +260,8 @@ public sealed class InterfacePopupForm : Form
             return;
         }
 
-        const int panel1Min = 260;
-        const int panel2Min = 280;
-
-        _splitContainer.Panel1MinSize = 0;
-        _splitContainer.Panel2MinSize = 0;
+        const int panel1Min = 320;
+        const int panel2Min = 260;
 
         var available = _splitContainer.Width - _splitContainer.SplitterWidth;
         if (available <= panel1Min + panel2Min)
@@ -273,53 +269,41 @@ public sealed class InterfacePopupForm : Form
             return;
         }
 
+        _splitContainer.Panel1MinSize = 0;
+        _splitContainer.Panel2MinSize = 0;
+
+        var maxLeft = available - panel2Min;
         if (!_splitterInitialized)
         {
             var preferredLeft = Math.Max(available / 2, panel1Min);
-            var maxLeft = available - panel2Min;
             _splitContainer.SplitterDistance = Math.Clamp(preferredLeft, panel1Min, maxLeft);
             _splitterInitialized = true;
+        }
+        else if (_splitContainer.SplitterDistance < panel1Min)
+        {
+            _splitContainer.SplitterDistance = panel1Min;
+        }
+        else if (_splitContainer.SplitterDistance > maxLeft)
+        {
+            _splitContainer.SplitterDistance = maxLeft;
         }
 
         _splitContainer.Panel1MinSize = panel1Min;
         _splitContainer.Panel2MinSize = panel2Min;
-
-        var maxDistance = available - panel2Min;
-        if (_splitContainer.SplitterDistance < panel1Min)
-        {
-            _splitContainer.SplitterDistance = panel1Min;
-        }
-        else if (_splitContainer.SplitterDistance > maxDistance)
-        {
-            _splitContainer.SplitterDistance = maxDistance;
-        }
     }
 
     private void ResizeInterfaceListColumns()
     {
-        if (_interfaceList.Columns.Count < 3 || _interfaceList.ClientSize.Width <= 0)
+        if (_interfaceList.Columns.Count < 2 || _interfaceList.ClientSize.Width <= 0)
         {
             return;
         }
 
-        const int typeWidth = 56;
-        const int minInterfaceWidth = 110;
-        const int minAddressWidth = 96;
+        const int typeWidth = 64;
         var available = _interfaceList.ClientSize.Width - 4;
-
-        if (available < minInterfaceWidth + minAddressWidth + typeWidth)
-        {
-            _interfaceList.Columns[2].Width = typeWidth;
-            _interfaceList.Columns[1].Width = 0;
-            _interfaceList.Columns[0].Width = Math.Max(minInterfaceWidth, available - typeWidth);
-            return;
-        }
-
-        var addressWidth = Math.Max(minAddressWidth, (available - typeWidth) / 2);
-        var interfaceWidth = available - typeWidth - addressWidth;
-        _interfaceList.Columns[2].Width = typeWidth;
-        _interfaceList.Columns[1].Width = addressWidth;
-        _interfaceList.Columns[0].Width = interfaceWidth;
+        _interfaceList.Columns[1].Width = typeWidth;
+        _interfaceList.Columns[0].Width = Math.Max(160, available - typeWidth);
+        _interfaceList.Invalidate();
     }
 
     private void OnInterfaceListDrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
@@ -369,33 +353,34 @@ public sealed class InterfacePopupForm : Form
         var text = e.SubItem.Text;
         var font = AppTheme.FontBody;
         var foreground = textColor;
+        var isPrimary = e.Item?.Tag is string id
+            && _interfacesById.TryGetValue(id, out var info)
+            && info.IsPrimary;
 
-        if (e.ColumnIndex == 0 && text.EndsWith(" *", StringComparison.Ordinal))
+        if (e.ColumnIndex == 0)
         {
-            text = text[..^2];
-            font = AppTheme.FontTitle;
-            foreground = AppTheme.TextPrimary;
+            if (isPrimary)
+            {
+                font = AppTheme.FontTitle;
+                foreground = AppTheme.TextPrimary;
+            }
         }
-        else         if (e.ColumnIndex == 2)
+        else if (e.ColumnIndex == 1)
         {
             foreground = string.Equals(text, "DHCP", StringComparison.OrdinalIgnoreCase)
                 ? AppTheme.Green
                 : AppTheme.Orange;
             font = AppTheme.FontCaption;
         }
-        else if (e.ColumnIndex == 1 && _interfaceList.Columns[1].Width > 0)
-        {
-            font = AppTheme.ValueFont;
-        }
 
-        var textBounds = Rectangle.Inflate(e.Bounds, -12, 0);
+        var textBounds = Rectangle.Inflate(e.Bounds, -10, 0);
         TextRenderer.DrawText(
             e.Graphics,
             text,
             font,
             textBounds,
             foreground,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
     }
 
     public void ForceClose()
@@ -513,11 +498,10 @@ public sealed class InterfacePopupForm : Form
 
                     foreach (var info in interfaces)
                     {
-                        var item = new ListViewItem(info.IsPrimary ? $"{info.Name} *" : info.Name)
+                        var item = new ListViewItem(info.Name)
                         {
                             Tag = info.Id
                         };
-                        item.SubItems.Add(info.IPv4Address);
                         item.SubItems.Add(info.ConfigurationLabel);
                         _interfaceList.Items.Add(item);
                     }
