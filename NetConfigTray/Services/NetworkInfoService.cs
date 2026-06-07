@@ -18,8 +18,8 @@ public sealed class NetworkInfoService
     {
         var configurations = QueryIpConfigurations();
         var adapters = QueryAdapters();
-        var routeMetrics = QueryRouteMetricsByInterface();
-        var primaryInterfaceIndex = QueryPrimaryInterfaceIndex();
+        var routeMetrics = RouteMetricHelper.QueryMetricsByInterface();
+        var primaryInterfaceIndex = QueryPrimaryInterfaceIndex(routeMetrics);
         var results = new List<NetworkInterfaceInfo>();
 
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
@@ -138,8 +138,8 @@ public sealed class NetworkInfoService
             var gateway = GetGateway(ni);
             var stats = ni.GetIPv4Statistics();
             var interfaceIndex = ni.GetIPProperties().GetIPv4Properties()?.Index;
-            var primaryInterfaceIndex = QueryPrimaryInterfaceIndex();
-            var routeMetrics = QueryRouteMetricsByInterface();
+            var routeMetrics = RouteMetricHelper.QueryMetricsByInterface();
+            var primaryInterfaceIndex = QueryPrimaryInterfaceIndex(routeMetrics);
             var wifiDetails = ni.NetworkInterfaceType == NetworkInterfaceType.Wireless80211
                 ? _wifiDetailsService.GetDetails(name)
                 : null;
@@ -223,52 +223,17 @@ public sealed class NetworkInfoService
         return servers.Length == 0 ? "None" : string.Join(", ", servers);
     }
 
-    private static Dictionary<uint, uint> QueryRouteMetricsByInterface()
-    {
-        var metrics = new Dictionary<uint, uint>();
-
-        using var searcher = new ManagementObjectSearcher(
-            "SELECT InterfaceIndex, Metric1 FROM Win32_IP4RouteTable WHERE Destination='0.0.0.0' AND Mask='0.0.0.0'");
-
-        foreach (var obj in searcher.Get().Cast<ManagementObject>())
-        {
-            var interfaceIndex = ReadUInt32(obj["InterfaceIndex"]);
-            var metric = ReadUInt32(obj["Metric1"]);
-            if (interfaceIndex is null || metric is null)
-            {
-                continue;
-            }
-
-            if (!metrics.TryGetValue(interfaceIndex.Value, out var existing) || metric.Value < existing)
-            {
-                metrics[interfaceIndex.Value] = metric.Value;
-            }
-        }
-
-        return metrics;
-    }
-
-    private static uint? QueryPrimaryInterfaceIndex()
+    private static uint? QueryPrimaryInterfaceIndex(IReadOnlyDictionary<uint, uint> routeMetrics)
     {
         uint? bestIndex = null;
         uint bestMetric = uint.MaxValue;
 
-        using var searcher = new ManagementObjectSearcher(
-            "SELECT InterfaceIndex, Metric1 FROM Win32_IP4RouteTable WHERE Destination='0.0.0.0' AND Mask='0.0.0.0'");
-
-        foreach (var obj in searcher.Get().Cast<ManagementObject>())
+        foreach (var (interfaceIndex, metric) in routeMetrics)
         {
-            var metric = ReadUInt32(obj["Metric1"]);
-            var interfaceIndex = ReadUInt32(obj["InterfaceIndex"]);
-            if (metric is null || interfaceIndex is null)
+            if (metric < bestMetric)
             {
-                continue;
-            }
-
-            if (metric.Value < bestMetric)
-            {
-                bestMetric = metric.Value;
-                bestIndex = interfaceIndex.Value;
+                bestMetric = metric;
+                bestIndex = interfaceIndex;
             }
         }
 

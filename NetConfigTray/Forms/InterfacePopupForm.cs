@@ -127,6 +127,7 @@ public sealed class InterfacePopupForm : Form
         _slowRefreshTimer.Tick += (_, _) => _services.Snapshot.EnsureFresh(TimeSpan.FromSeconds(9));
 
         _services.Snapshot.SnapshotUpdated += OnSnapshotUpdated;
+        _services.GatewayPing.GatewayPingUpdated += OnGatewayPingUpdated;
 
         Shown += (_, _) =>
         {
@@ -284,6 +285,7 @@ public sealed class InterfacePopupForm : Form
         if (disposing)
         {
             _services.Snapshot.SnapshotUpdated -= OnSnapshotUpdated;
+            _services.GatewayPing.GatewayPingUpdated -= OnGatewayPingUpdated;
             _fastRefreshTimer.Dispose();
             _slowRefreshTimer.Dispose();
         }
@@ -300,6 +302,26 @@ public sealed class InterfacePopupForm : Form
     private void ForceRefresh(bool includeSlowDetails)
     {
         _services.Snapshot.RequestRefresh(includeSlowDetails);
+    }
+
+    private void OnGatewayPingUpdated(string gateway)
+    {
+        RunOnUiThread(() =>
+        {
+            if (string.IsNullOrWhiteSpace(_selectedInterfaceId) ||
+                !_interfacesById.TryGetValue(_selectedInterfaceId, out var info) ||
+                !string.Equals(info.Gateway, gateway, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var updated = info with
+            {
+                GatewayPing = _services.GatewayPing.GetLatencyText(gateway)
+            };
+            _interfacesById[_selectedInterfaceId] = updated;
+            _detailPanel.UpdateLiveFields(updated);
+        });
     }
 
     private void OnSnapshotUpdated()
