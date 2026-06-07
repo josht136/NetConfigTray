@@ -19,7 +19,7 @@ public sealed class InterfaceDetailPanel : Panel
         BackColor = AppTheme.AppBackground;
         ForeColor = AppTheme.TextPrimary;
         AutoScroll = true;
-        Padding = new Padding(20, 16, 20, 16);
+        Padding = new Padding(32, 28, 32, 28);
         DoubleBuffered = true;
         SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
 
@@ -33,7 +33,7 @@ public sealed class InterfaceDetailPanel : Panel
         };
 
         Controls.Add(_contentPanel);
-        Resize += (_, _) => _contentPanel.Width = ClientSize.Width - Padding.Horizontal - SystemInformation.VerticalScrollBarWidth;
+        Resize += (_, _) => _contentPanel.Width = Math.Max(280, ClientSize.Width - Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 8);
     }
 
     public void ShowPlaceholder(string message)
@@ -179,7 +179,7 @@ public sealed class InterfaceDetailPanel : Panel
 
             AddHeader(_info.Name, _info.IsPrimary, ref y, contentWidth);
             AddBadge(_info.ConfigurationLabel, _info.ConfigurationType, ref y, contentWidth);
-            y += 4;
+            y += 8;
             AddDetailRow("IP address", _info.IPv4Address, ref y, contentWidth);
             AddDetailRow("CIDR", _info.Cidr, ref y, contentWidth);
             AddDetailRow("MAC address", _info.MacAddress, ref y, contentWidth);
@@ -338,8 +338,8 @@ public sealed class InterfaceDetailPanel : Panel
         {
             BackColor = AppTheme.Surface,
             Location = new Point(0, y),
-            Size = new Size(width, 52),
-            Padding = new Padding(12, 8, 12, 8)
+            Size = new Size(width, 58),
+            Padding = new Padding(14, 10, 14, 10)
         };
 
         var label = new Label
@@ -348,7 +348,7 @@ public sealed class InterfaceDetailPanel : Panel
             Font = AppTheme.FontCaption,
             ForeColor = AppTheme.TextMuted,
             AutoSize = true,
-            Location = new Point(12, 8),
+            Location = new Point(14, 10),
             BackColor = Color.Transparent
         };
 
@@ -360,16 +360,16 @@ public sealed class InterfaceDetailPanel : Panel
             Font = AppTheme.ValueFont,
             ForeColor = AppTheme.TextPrimary,
             AutoSize = true,
-            MaximumSize = new Size(width - 108, 0),
-            Location = new Point(12, 26),
+            MaximumSize = new Size(width - 120, 0),
+            Location = new Point(14, 30),
             BackColor = Color.Transparent
         };
 
         var copyButton = new Button
         {
             Text = "Copy",
-            Size = new Size(56, 28),
-            Location = new Point(width - 68, 12)
+            Size = new Size(64, 28),
+            Location = new Point(width - 78, 15)
         };
         AppTheme.StyleGhostButton(copyButton);
         copyButton.Click += (_, _) => ClipboardHelper.CopyText(value);
@@ -379,7 +379,7 @@ public sealed class InterfaceDetailPanel : Panel
         rowPanel.Controls.Add(copyButton);
         _contentPanel.Controls.Add(rowPanel);
 
-        y += rowPanel.Height + 6;
+        y += rowPanel.Height + 8;
     }
 
     private void UpdateValue(string labelText, string value)

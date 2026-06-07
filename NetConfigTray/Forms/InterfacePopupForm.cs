@@ -113,7 +113,8 @@ public sealed class InterfacePopupForm : Form
         _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
 
         _splitContainer.Panel1.Controls.Add(_interfaceList);
-        _splitContainer.Panel1.Padding = new Padding(12, 8, 8, 8);
+        _splitContainer.Panel1.Padding = new Padding(8, 10, 4, 10);
+        _splitContainer.Panel1.Resize += (_, _) => ResizeInterfaceListColumns();
 
         _detailPanel = new InterfaceDetailPanel();
         _splitContainer.Panel2.Controls.Add(_detailPanel);
@@ -161,11 +162,24 @@ public sealed class InterfacePopupForm : Form
 
         Shown += (_, _) =>
         {
-            ConfigureSplitterLayout();
+            BeginInvoke(() =>
+            {
+                ConfigureSplitterLayout();
+                ResizeInterfaceListColumns();
+            });
             _services.PublicIp.RefreshAsync();
             ForceRefresh(includeSlowDetails: false);
             _fastRefreshTimer.Start();
             _slowRefreshTimer.Start();
+        };
+
+        Layout += (_, _) =>
+        {
+            if (!_splitterInitialized && _splitContainer.Width >= 480)
+            {
+                ConfigureSplitterLayout();
+                ResizeInterfaceListColumns();
+            }
         };
 
         VisibleChanged += (_, _) =>
@@ -198,7 +212,13 @@ public sealed class InterfacePopupForm : Form
         WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
+        if (_splitContainer.Panel1.Width < 220)
+        {
+            _splitterInitialized = false;
+        }
+
         ConfigureSplitterLayout();
+        ResizeInterfaceListColumns();
         ApplySnapshotToUi();
         ForceRefresh(includeSlowDetails: false);
     }
@@ -236,36 +256,29 @@ public sealed class InterfacePopupForm : Form
 
     private void ConfigureSplitterLayout()
     {
-        if (_splitContainer.IsDisposed || _splitContainer.Width <= 0)
+        if (_splitContainer.IsDisposed || _splitContainer.Width < 480)
         {
             return;
         }
 
-        const int panel1Min = 140;
-        const int panel2Min = 240;
+        const int panel1Min = 260;
+        const int panel2Min = 280;
 
         _splitContainer.Panel1MinSize = 0;
         _splitContainer.Panel2MinSize = 0;
 
         var available = _splitContainer.Width - _splitContainer.SplitterWidth;
-        if (available <= 0)
+        if (available <= panel1Min + panel2Min)
         {
             return;
         }
 
         if (!_splitterInitialized)
         {
-            var half = available / 2;
-            _splitContainer.SplitterDistance = Math.Clamp(
-                half,
-                0,
-                Math.Max(0, available));
+            var preferredLeft = Math.Max(available / 2, panel1Min);
+            var maxLeft = available - panel2Min;
+            _splitContainer.SplitterDistance = Math.Clamp(preferredLeft, panel1Min, maxLeft);
             _splitterInitialized = true;
-        }
-
-        if (available < panel1Min + panel2Min)
-        {
-            return;
         }
 
         _splitContainer.Panel1MinSize = panel1Min;
@@ -280,6 +293,33 @@ public sealed class InterfacePopupForm : Form
         {
             _splitContainer.SplitterDistance = maxDistance;
         }
+    }
+
+    private void ResizeInterfaceListColumns()
+    {
+        if (_interfaceList.Columns.Count < 3 || _interfaceList.ClientSize.Width <= 0)
+        {
+            return;
+        }
+
+        const int typeWidth = 56;
+        const int minInterfaceWidth = 110;
+        const int minAddressWidth = 96;
+        var available = _interfaceList.ClientSize.Width - 4;
+
+        if (available < minInterfaceWidth + minAddressWidth + typeWidth)
+        {
+            _interfaceList.Columns[2].Width = typeWidth;
+            _interfaceList.Columns[1].Width = 0;
+            _interfaceList.Columns[0].Width = Math.Max(minInterfaceWidth, available - typeWidth);
+            return;
+        }
+
+        var addressWidth = Math.Max(minAddressWidth, (available - typeWidth) / 2);
+        var interfaceWidth = available - typeWidth - addressWidth;
+        _interfaceList.Columns[2].Width = typeWidth;
+        _interfaceList.Columns[1].Width = addressWidth;
+        _interfaceList.Columns[0].Width = interfaceWidth;
     }
 
     private void OnInterfaceListDrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
@@ -336,14 +376,14 @@ public sealed class InterfacePopupForm : Form
             font = AppTheme.FontTitle;
             foreground = AppTheme.TextPrimary;
         }
-        else if (e.ColumnIndex == 2)
+        else         if (e.ColumnIndex == 2)
         {
             foreground = string.Equals(text, "DHCP", StringComparison.OrdinalIgnoreCase)
                 ? AppTheme.Green
                 : AppTheme.Orange;
             font = AppTheme.FontCaption;
         }
-        else if (e.ColumnIndex == 1)
+        else if (e.ColumnIndex == 1 && _interfaceList.Columns[1].Width > 0)
         {
             font = AppTheme.ValueFont;
         }
