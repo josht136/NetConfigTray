@@ -9,9 +9,9 @@
     <AssemblyName>NetConfigTray</AssemblyName>
     <RootNamespace>NetConfigTray</RootNamespace>
     <Version>1.0.0</Version>
-    <Description>Quick view of active network interface IP addresses and Static/DHCP configuration</Description>
-    <Company>NetConfigTray</Company>
-    <Product>NetConfigTray</Product>
+    <Description>Tiller Network Tool (TNT) — network interface IP and DHCP status</Description>
+    <Company>Tiller</Company>
+    <Product>Tiller Network Tool</Product>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <UseAppHost>false</UseAppHost>
     <PublishSingleFile>true</PublishSingleFile>

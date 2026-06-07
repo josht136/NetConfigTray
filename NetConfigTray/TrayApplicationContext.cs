@@ -12,7 +12,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _notificationsMenuItem;
     private readonly Form _hostForm;
     private readonly System.Windows.Forms.Timer _trayRefreshTimer;
-    private InterfacePopupForm? _popupForm;
+    private InterfacePopupForm? _mainWindow;
     private bool _isExiting;
     private Icon? _currentTrayIcon;
 
@@ -50,7 +50,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
 
         var contextMenu = new ContextMenuStrip();
-        contextMenu.Items.Add(new ToolStripMenuItem("Open", null, (_, _) => ShowPopup()));
+        contextMenu.Items.Add(new ToolStripMenuItem($"Open {AppBranding.ShortName}", null, (_, _) => ShowMainWindow()));
         contextMenu.Items.Add(_autostartMenuItem);
         contextMenu.Items.Add(_notificationsMenuItem);
         contextMenu.Items.Add(new ToolStripSeparator());
@@ -60,7 +60,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon = new NotifyIcon
         {
             Icon = _currentTrayIcon,
-            Text = "NetConfigTray — Network IP & DHCP status",
+            Text = $"{AppBranding.ShortName} — Network status",
             Visible = true,
             ContextMenuStrip = contextMenu
         };
@@ -100,7 +100,7 @@ public sealed class TrayApplicationContext : ApplicationContext
                         ? changes[0]
                         : string.Join(Environment.NewLine, changes.Take(3));
 
-                    _notifyIcon.ShowBalloonTip(4000, "NetConfigTray", message, ToolTipIcon.Info);
+                    _notifyIcon.ShowBalloonTip(4000, AppBranding.ShortName, message, ToolTipIcon.Info);
                 }
             }
 
@@ -114,11 +114,11 @@ public sealed class TrayApplicationContext : ApplicationContext
             if (primary is not null)
             {
                 var publicIp = _services.PublicIp.GetDisplayText();
-                _notifyIcon.Text = $"{primary.Name}: {primary.IPv4Address} ({primary.ConfigurationLabel}) · Public {publicIp}";
+                _notifyIcon.Text = $"{AppBranding.ShortName}: {primary.Name} {primary.IPv4Address} ({primary.ConfigurationLabel}) · {publicIp}";
             }
             else
             {
-                _notifyIcon.Text = "NetConfigTray — No active interface";
+                _notifyIcon.Text = $"{AppBranding.ShortName} — No active interface";
             }
         }
         catch
@@ -131,42 +131,37 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (e.Button == MouseButtons.Left)
         {
-            ShowPopup();
+            ShowMainWindow();
         }
     }
 
-    private void ShowPopup()
+    private void ShowMainWindow()
     {
         if (_isExiting)
         {
             return;
         }
 
-        EnsurePopupForm();
+        EnsureMainWindow();
+        _mainWindow!.ShowMainWindow();
+    }
 
-        if (!_popupForm!.ShowNearTray())
+    private void EnsureMainWindow()
+    {
+        if (_mainWindow is null || _mainWindow.IsDisposed)
         {
-            RecreatePopupForm();
-            _popupForm.ShowNearTray();
+            RecreateMainWindow();
         }
     }
 
-    private void EnsurePopupForm()
+    private void RecreateMainWindow()
     {
-        if (_popupForm is null || _popupForm.IsDisposed)
+        if (_mainWindow is { IsDisposed: false })
         {
-            RecreatePopupForm();
-        }
-    }
-
-    private void RecreatePopupForm()
-    {
-        if (_popupForm is { IsDisposed: false })
-        {
-            _popupForm.Dispose();
+            _mainWindow.Dispose();
         }
 
-        _popupForm = new InterfacePopupForm(_services);
+        _mainWindow = new InterfacePopupForm(_services);
     }
 
     private void Exit()
@@ -182,12 +177,13 @@ public sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
 
-        if (_popupForm is { IsDisposed: false })
+        if (_mainWindow is { IsDisposed: false })
         {
-            _popupForm.Dispose();
+            _mainWindow.ForceClose();
+            _mainWindow.Dispose();
         }
 
-        _popupForm = null;
+        _mainWindow = null;
         _currentTrayIcon?.Dispose();
         _services.Dispose();
         _hostForm.Close();
@@ -203,9 +199,9 @@ public sealed class TrayApplicationContext : ApplicationContext
             _currentTrayIcon?.Dispose();
             _services.Dispose();
 
-            if (_popupForm is { IsDisposed: false })
+            if (_mainWindow is { IsDisposed: false })
             {
-                _popupForm.Dispose();
+                _mainWindow.Dispose();
             }
 
             if (!_hostForm.IsDisposed)

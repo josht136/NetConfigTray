@@ -1,3 +1,4 @@
+using NetConfigTray.Helpers;
 using NetConfigTray.Models;
 using NetConfigTray.Services;
 
@@ -6,42 +7,47 @@ namespace NetConfigTray.Forms;
 public sealed class InterfacePopupForm : Form
 {
     private readonly AppServices _services;
-    private readonly FlowLayoutPanel _interfacePanel;
+    private readonly ListView _interfaceList;
+    private readonly InterfaceDetailPanel _detailPanel;
     private readonly Label _statusLabel;
     private readonly System.Windows.Forms.Timer _fastRefreshTimer;
     private readonly System.Windows.Forms.Timer _slowRefreshTimer;
-    private readonly Dictionary<string, InterfaceCardPanel> _cards = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _expandedInterfaceIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, NetworkInterfaceInfo> _interfacesById = new(StringComparer.OrdinalIgnoreCase);
+    private string? _selectedInterfaceId;
     private bool _refreshPending;
+    private bool _forceClose;
 
     public InterfacePopupForm(AppServices services)
     {
         _services = services;
 
-        Text = "NetConfigTray";
-        FormBorderStyle = FormBorderStyle.FixedToolWindow;
+        Text = AppBranding.FullName;
+        FormBorderStyle = FormBorderStyle.Sizable;
         ControlBox = true;
-        ShowInTaskbar = false;
-        TopMost = true;
-        StartPosition = FormStartPosition.Manual;
-        ClientSize = new Size(440, 420);
+        MinimizeBox = true;
+        MaximizeBox = true;
+        ShowInTaskbar = true;
+        TopMost = false;
+        StartPosition = FormStartPosition.CenterScreen;
+        MinimumSize = new Size(640, 420);
+        ClientSize = new Size(760, 480);
         BackColor = Color.White;
         Font = new Font("Segoe UI", 9F);
-        Padding = new Padding(12);
 
         var headerPanel = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 36,
-            BackColor = Color.White
+            Height = 44,
+            BackColor = Color.FromArgb(245, 245, 245),
+            Padding = new Padding(12, 8, 12, 8)
         };
 
         var titleLabel = new Label
         {
-            Text = "Network Interfaces",
-            Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold),
+            Text = AppBranding.FullName,
+            Font = new Font("Segoe UI Semibold", 12F, FontStyle.Bold),
             AutoSize = true,
-            Location = new Point(0, 4)
+            Location = new Point(12, 10)
         };
 
         var refreshButton = new Button
@@ -57,28 +63,53 @@ public sealed class InterfacePopupForm : Form
         headerPanel.Controls.Add(refreshButton);
         headerPanel.Resize += (_, _) =>
         {
-            refreshButton.Location = new Point(headerPanel.Width - refreshButton.Width, 4);
+            refreshButton.Location = new Point(headerPanel.Width - refreshButton.Width - 12, 8);
         };
 
-        _interfacePanel = new FlowLayoutPanel
+        var splitContainer = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoScroll = true,
-            Padding = new Padding(0, 8, 0, 0)
+            SplitterDistance = 220,
+            SplitterWidth = 6,
+            BackColor = Color.FromArgb(230, 230, 230),
+            Panel1MinSize = 160,
+            Panel2MinSize = 280
         };
+
+        _interfaceList = new ListView
+        {
+            Dock = DockStyle.Fill,
+            View = View.Details,
+            FullRowSelect = true,
+            HideSelection = false,
+            MultiSelect = false,
+            HeaderStyle = ColumnHeaderStyle.Nonclickable,
+            BorderStyle = BorderStyle.None,
+            Font = new Font("Segoe UI", 9F)
+        };
+        _interfaceList.Columns.Add("Interface", 110);
+        _interfaceList.Columns.Add("Address", 100);
+        _interfaceList.SelectedIndexChanged += (_, _) => OnInterfaceSelected();
+
+        splitContainer.Panel1.Controls.Add(_interfaceList);
+        splitContainer.Panel1.BackColor = Color.White;
+        splitContainer.Panel1.Padding = new Padding(8);
+
+        _detailPanel = new InterfaceDetailPanel();
+        splitContainer.Panel2.Controls.Add(_detailPanel);
+        splitContainer.Panel2.BackColor = Color.White;
 
         _statusLabel = new Label
         {
             Dock = DockStyle.Bottom,
-            Height = 34,
+            Height = 28,
             ForeColor = Color.Gray,
-            TextAlign = ContentAlignment.TopLeft,
-            Text = "Click an interface for details"
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(12, 0, 12, 0),
+            Text = $"{AppBranding.ShortName} — loading…"
         };
 
-        Controls.Add(_interfacePanel);
+        Controls.Add(splitContainer);
         Controls.Add(_statusLabel);
         Controls.Add(headerPanel);
 
@@ -90,10 +121,8 @@ public sealed class InterfacePopupForm : Form
 
         _services.Snapshot.SnapshotUpdated += OnSnapshotUpdated;
 
-        Deactivate += (_, _) => Hide();
         Shown += (_, _) =>
         {
-            PositionNearTray();
             _services.PublicIp.RefreshAsync();
             ForceRefresh(includeSlowDetails: false);
             _fastRefreshTimer.Start();
@@ -115,43 +144,50 @@ public sealed class InterfacePopupForm : Form
         };
     }
 
-    public bool ShowNearTray()
+    public void ShowMainWindow()
     {
         if (IsDisposed)
         {
-            return false;
+            return;
         }
 
-        if (Visible)
+        if (!Visible)
         {
-            Hide();
-            return true;
-        }
-
-        try
-        {
-            PositionNearTray();
             Show();
-            Activate();
-            ForceRefresh(includeSlowDetails: false);
-            return true;
         }
-        catch (ObjectDisposedException)
-        {
-            return false;
-        }
+
+        WindowState = FormWindowState.Normal;
+        Activate();
+        BringToFront();
+        ForceRefresh(includeSlowDetails: false);
+    }
+
+    public void ForceClose()
+    {
+        _forceClose = true;
+        Close();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (e.CloseReason != CloseReason.ApplicationExitCall)
+        if (!_forceClose && e.CloseReason != CloseReason.ApplicationExitCall)
         {
             e.Cancel = true;
-            Hide();
+            HideToTray();
             return;
         }
 
         base.OnFormClosing(e);
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+
+        if (WindowState == FormWindowState.Minimized)
+        {
+            HideToTray();
+        }
     }
 
     protected override void Dispose(bool disposing)
@@ -164,6 +200,12 @@ public sealed class InterfacePopupForm : Form
         }
 
         base.Dispose(disposing);
+    }
+
+    private void HideToTray()
+    {
+        Hide();
+        WindowState = FormWindowState.Normal;
     }
 
     private void ForceRefresh(bool includeSlowDetails)
@@ -201,72 +243,107 @@ public sealed class InterfacePopupForm : Form
                 .Select(EnrichInterface)
                 .ToList();
 
+            _interfacesById.Clear();
+            foreach (var info in interfaces)
+            {
+                _interfacesById[info.Id] = info;
+            }
+
             _statusLabel.Text = interfaces.Count == 0
-                ? "Refreshing…"
-                : $"Public IP: {_services.PublicIp.GetDisplayText()}{Environment.NewLine}Updated {DateTime.Now:t} · click interface for details";
+                ? $"{AppBranding.ShortName} — refreshing…"
+                : $"{AppBranding.ShortName} · Public IP {_services.PublicIp.GetDisplayText()} · Updated {DateTime.Now:t}";
 
-            _interfacePanel.SuspendLayout();
+            var previousSelection = _selectedInterfaceId;
+            _interfaceList.BeginUpdate();
+            _interfaceList.Items.Clear();
 
-            if (interfaces.Count == 0)
+            foreach (var info in interfaces)
             {
-                _interfacePanel.Controls.Clear();
-                _cards.Clear();
-                _interfacePanel.Controls.Add(new Label
+                var item = new ListViewItem(info.Name)
                 {
-                    Text = "Refreshing network interfaces…",
-                    ForeColor = Color.Gray,
-                    Width = _interfacePanel.ClientSize.Width - 24,
-                    Padding = new Padding(4)
-                });
-            }
-            else
-            {
-                RemovePlaceholderLabels();
-
-                var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var info in interfaces)
+                    Tag = info.Id
+                };
+                item.SubItems.Add(info.IPv4Address);
+                item.SubItems.Add(info.ConfigurationLabel);
+                if (info.IsPrimary)
                 {
-                    seenIds.Add(info.Id);
-                    var (downloadBps, uploadBps) = _services.Throughput.GetThroughput(
-                        info.Id,
-                        info.BytesReceived,
-                        info.BytesSent);
-
-                    _services.ThroughputHistory.AddSample(info.Id, downloadBps, uploadBps);
-                    var history = _services.ThroughputHistory.GetDownloadHistory(info.Id);
-
-                    if (!_cards.TryGetValue(info.Id, out var card))
-                    {
-                        card = CreateCard(info.Id);
-                        _cards[info.Id] = card;
-                        _interfacePanel.Controls.Add(card);
-                    }
-
-                    card.Bind(info, downloadBps, uploadBps, history, _expandedInterfaceIds.Contains(info.Id));
+                    item.Font = new Font(_interfaceList.Font, FontStyle.Bold);
                 }
 
-                foreach (var id in _cards.Keys.ToList())
-                {
-                    if (seenIds.Contains(id))
-                    {
-                        continue;
-                    }
-
-                    if (_cards.Remove(id, out var removed))
-                    {
-                        _interfacePanel.Controls.Remove(removed);
-                        removed.Dispose();
-                        _expandedInterfaceIds.Remove(id);
-                    }
-                }
+                _interfaceList.Items.Add(item);
             }
 
-            _interfacePanel.ResumeLayout(performLayout: true);
+            _interfaceList.EndUpdate();
+
+            SelectInterface(previousSelection ?? interfaces.FirstOrDefault(i => i.IsPrimary)?.Id ?? interfaces.FirstOrDefault()?.Id);
+            OnInterfaceSelected();
         }
         finally
         {
             _refreshPending = false;
         }
+    }
+
+    private void SelectInterface(string? interfaceId)
+    {
+        if (_interfaceList.Items.Count == 0)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(interfaceId))
+        {
+            foreach (ListViewItem item in _interfaceList.Items)
+            {
+                if (string.Equals(item.Tag as string, interfaceId, StringComparison.OrdinalIgnoreCase))
+                {
+                    item.Selected = true;
+                    item.Focused = true;
+                    item.EnsureVisible();
+                    return;
+                }
+            }
+        }
+
+        foreach (ListViewItem item in _interfaceList.Items)
+        {
+            if (string.Equals(item.Tag as string, _interfacesById.Values.FirstOrDefault(i => i.IsPrimary)?.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                item.Selected = true;
+                item.Focused = true;
+                item.EnsureVisible();
+                return;
+            }
+        }
+
+        _interfaceList.Items[0].Selected = true;
+    }
+
+    private void OnInterfaceSelected()
+    {
+        if (_interfaceList.SelectedItems.Count == 0)
+        {
+            return;
+        }
+
+        var selectedId = _interfaceList.SelectedItems[0].Tag as string;
+        if (string.IsNullOrWhiteSpace(selectedId) ||
+            !_interfacesById.TryGetValue(selectedId, out var info))
+        {
+            return;
+        }
+
+        _selectedInterfaceId = selectedId;
+        _services.Snapshot.RequestConnectedDevice(selectedId);
+
+        var (downloadBps, uploadBps) = _services.Throughput.GetThroughput(
+            info.Id,
+            info.BytesReceived,
+            info.BytesSent);
+
+        _services.ThroughputHistory.AddSample(info.Id, downloadBps, uploadBps);
+        var history = _services.ThroughputHistory.GetDownloadHistory(info.Id);
+        _detailPanel.Bind(info, downloadBps, uploadBps, history);
     }
 
     private NetworkInterfaceInfo EnrichInterface(NetworkInterfaceInfo info)
@@ -280,72 +357,37 @@ public sealed class InterfacePopupForm : Form
         };
     }
 
-    private InterfaceCardPanel CreateCard(string interfaceId)
-    {
-        var card = new InterfaceCardPanel(_interfacePanel.ClientSize.Width - 28)
-        {
-            Tag = interfaceId
-        };
-
-        card.ExpandedChanged += (_, _) =>
-        {
-            if (card.Tag is not string id)
-            {
-                return;
-            }
-
-            if (card.IsExpanded)
-            {
-                _expandedInterfaceIds.Add(id);
-                _services.Snapshot.RequestConnectedDevice(id);
-            }
-            else
-            {
-                _expandedInterfaceIds.Remove(id);
-            }
-        };
-
-        return card;
-    }
-
     private void UpdateThroughputOnly()
     {
-        if (IsDisposed || _cards.Count == 0)
+        if (IsDisposed || string.IsNullOrWhiteSpace(_selectedInterfaceId))
+        {
+            return;
+        }
+
+        if (!_interfacesById.TryGetValue(_selectedInterfaceId, out var info))
         {
             return;
         }
 
         var byteCounts = _services.Snapshot.GetLiveByteCounts();
-        foreach (var (id, card) in _cards)
+        if (!byteCounts.TryGetValue(_selectedInterfaceId, out var counts))
         {
-            if (!byteCounts.TryGetValue(id, out var counts))
-            {
-                continue;
-            }
-
-            var (downloadBps, uploadBps) = _services.Throughput.GetThroughput(
-                id,
-                counts.BytesReceived,
-                counts.BytesSent);
-
-            _services.ThroughputHistory.AddSample(id, downloadBps, uploadBps);
-            card.UpdateThroughput(downloadBps, uploadBps, _services.ThroughputHistory.GetDownloadHistory(id));
+            return;
         }
-    }
 
-    private void RemovePlaceholderLabels()
-    {
-        foreach (var label in _interfacePanel.Controls.OfType<Label>().ToList())
+        info = info with
         {
-            _interfacePanel.Controls.Remove(label);
-            label.Dispose();
-        }
-    }
+            BytesReceived = counts.BytesReceived,
+            BytesSent = counts.BytesSent
+        };
+        _interfacesById[_selectedInterfaceId] = info;
 
-    private void PositionNearTray()
-    {
-        var screen = Screen.FromPoint(Cursor.Position);
-        var area = screen.WorkingArea;
-        Location = new Point(area.Right - Width - 8, area.Bottom - Height - 8);
+        var (downloadBps, uploadBps) = _services.Throughput.GetThroughput(
+            _selectedInterfaceId,
+            counts.BytesReceived,
+            counts.BytesSent);
+
+        _services.ThroughputHistory.AddSample(_selectedInterfaceId, downloadBps, uploadBps);
+        _detailPanel.UpdateThroughput(downloadBps, uploadBps, _services.ThroughputHistory.GetDownloadHistory(_selectedInterfaceId));
     }
 }
