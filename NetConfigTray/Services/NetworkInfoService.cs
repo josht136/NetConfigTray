@@ -1,47 +1,52 @@
 using System.Management;
 using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using NetConfigTray.Models;
 
 namespace NetConfigTray.Services;
 
 public sealed class NetworkInfoService
 {
-    private const int ConnectedStatus = 2;
-
     public IReadOnlyList<NetworkInterfaceInfo> GetActiveInterfaces()
     {
         var configurations = QueryIpConfigurations();
-        var friendlyNames = QueryFriendlyNames();
+        var adapters = QueryAdapters();
         var results = new List<NetworkInterfaceInfo>();
 
-        foreach (var (index, config) in configurations)
+        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {
-            if (!IsAdapterConnected(index))
+            if (ni.OperationalStatus != OperationalStatus.Up)
             {
                 continue;
             }
 
-            if (!IsInterfaceActive(index))
+            if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback)
             {
                 continue;
             }
 
-            var ipv4 = GetPrimaryIPv4(config.IpAddresses);
+            var ipv4 = GetPrimaryIPv4(ni);
             if (ipv4 is null)
             {
                 continue;
             }
 
-            friendlyNames.TryGetValue(index, out var friendlyName);
-            var name = !string.IsNullOrWhiteSpace(friendlyName)
-                ? friendlyName
-                : config.Description;
-
-            if (string.IsNullOrWhiteSpace(name))
+            if (!TryResolveAdapter(ni, adapters, out var adapter))
             {
                 continue;
             }
+
+            if (!configurations.TryGetValue(adapter.InterfaceIndex, out var config))
+            {
+                continue;
+            }
+
+            var name = !string.IsNullOrWhiteSpace(adapter.FriendlyName)
+                ? adapter.FriendlyName
+                : !string.IsNullOrWhiteSpace(config.Description)
+                    ? config.Description
+                    : ni.Name;
 
             results.Add(new NetworkInterfaceInfo
             {
@@ -56,106 +61,126 @@ public sealed class NetworkInfoService
             .ToList();
     }
 
-    private static bool IsAdapterConnected(uint interfaceIndex)
+    private static bool TryResolveAdapter(
+        NetworkInterface networkInterface,
+        IReadOnlyList<AdapterInfo> adapters,
+        out AdapterInfo adapter)
     {
-        using var searcher = new ManagementObjectSearcher(
-            $"SELECT NetConnectionStatus FROM Win32_NetworkAdapter WHERE InterfaceIndex = {interfaceIndex}");
+        var normalizedId = NormalizeGuid(networkInterface.Id);
 
-        foreach (var obj in searcher.Get().Cast<ManagementObject>())
+        foreach (var candidate in adapters)
         {
-            if (obj["NetConnectionStatus"] is ushort status)
+            if (!string.IsNullOrEmpty(candidate.Guid) &&
+                NormalizeGuid(candidate.Guid) == normalizedId)
             {
-                return status == ConnectedStatus;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsInterfaceActive(uint interfaceIndex)
-    {
-        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
-        {
-            if (ni.OperationalStatus != OperationalStatus.Up)
-            {
-                continue;
-            }
-
-            if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback)
-            {
-                continue;
-            }
-
-            var props = ni.GetIPProperties();
-            if (props.GetIPv4Properties()?.Index == (int)interfaceIndex)
-            {
+                adapter = candidate;
                 return true;
             }
         }
 
+        foreach (var candidate in adapters)
+        {
+            if (string.Equals(candidate.Description, networkInterface.Description, StringComparison.OrdinalIgnoreCase))
+            {
+                adapter = candidate;
+                return true;
+            }
+        }
+
+        adapter = default;
         return false;
     }
 
-    private static string? GetPrimaryIPv4(string[] ipAddresses)
+    private static string NormalizeGuid(string value)
     {
-        foreach (var address in ipAddresses)
+        return value.Trim('{', '}').ToUpperInvariant();
+    }
+
+    private static string? GetPrimaryIPv4(NetworkInterface networkInterface)
+    {
+        foreach (var address in networkInterface.GetIPProperties().UnicastAddresses)
         {
-            if (IPAddress.TryParse(address, out var ip) &&
-                ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
-                !IPAddress.IsLoopback(ip))
+            if (address.Address.AddressFamily != AddressFamily.InterNetwork)
             {
-                return address;
+                continue;
             }
+
+            if (IPAddress.IsLoopback(address.Address))
+            {
+                continue;
+            }
+
+            return address.Address.ToString();
         }
 
         return null;
     }
 
-    private static Dictionary<uint, (bool DhcpEnabled, string[] IpAddresses, string Description)> QueryIpConfigurations()
+    private static uint? ReadUInt32(object? value)
     {
-        var configurations = new Dictionary<uint, (bool DhcpEnabled, string[] IpAddresses, string Description)>();
+        if (value is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return Convert.ToUInt32(value);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Dictionary<uint, (bool DhcpEnabled, string Description)> QueryIpConfigurations()
+    {
+        var configurations = new Dictionary<uint, (bool DhcpEnabled, string Description)>();
 
         using var searcher = new ManagementObjectSearcher(
-            "SELECT Index, Description, DHCPEnabled, IPAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE");
+            "SELECT Index, Description, DHCPEnabled FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE");
 
         foreach (var obj in searcher.Get().Cast<ManagementObject>())
         {
-            if (obj["Index"] is not uint index)
+            var index = ReadUInt32(obj["Index"]);
+            if (index is null)
             {
                 continue;
             }
 
             var dhcpEnabled = obj["DHCPEnabled"] is true;
-            var ipAddresses = (obj["IPAddress"] as string[]) ?? Array.Empty<string>();
             var description = obj["Description"] as string ?? string.Empty;
 
-            configurations[index] = (dhcpEnabled, ipAddresses, description);
+            configurations[index.Value] = (dhcpEnabled, description);
         }
 
         return configurations;
     }
 
-    private static Dictionary<uint, string> QueryFriendlyNames()
+    private static List<AdapterInfo> QueryAdapters()
     {
-        var names = new Dictionary<uint, string>();
+        var adapters = new List<AdapterInfo>();
 
         using var searcher = new ManagementObjectSearcher(
-            "SELECT InterfaceIndex, NetConnectionID FROM Win32_NetworkAdapter WHERE NetConnectionID IS NOT NULL");
+            "SELECT InterfaceIndex, NetConnectionID, GUID, Description FROM Win32_NetworkAdapter");
 
         foreach (var obj in searcher.Get().Cast<ManagementObject>())
         {
-            if (obj["InterfaceIndex"] is not uint interfaceIndex)
+            var interfaceIndex = ReadUInt32(obj["InterfaceIndex"]);
+            if (interfaceIndex is null)
             {
                 continue;
             }
 
-            var name = obj["NetConnectionID"] as string;
-            if (!string.IsNullOrWhiteSpace(name))
-            {
-                names[interfaceIndex] = name;
-            }
+            adapters.Add(new AdapterInfo(
+                interfaceIndex.Value,
+                obj["NetConnectionID"] as string ?? string.Empty,
+                obj["GUID"] as string ?? string.Empty,
+                obj["Description"] as string ?? string.Empty));
         }
 
-        return names;
+        return adapters;
     }
+
+    private readonly record struct AdapterInfo(uint InterfaceIndex, string FriendlyName, string Guid, string Description);
 }

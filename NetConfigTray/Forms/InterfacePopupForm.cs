@@ -21,6 +21,7 @@ public sealed class InterfacePopupForm : Form
 
         Text = "NetConfigTray";
         FormBorderStyle = FormBorderStyle.FixedToolWindow;
+        ControlBox = true;
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
@@ -108,6 +109,11 @@ public sealed class InterfacePopupForm : Form
 
     public void ShowNearTray()
     {
+        if (IsDisposed)
+        {
+            throw new ObjectDisposedException(nameof(InterfacePopupForm));
+        }
+
         if (Visible)
         {
             Hide();
@@ -120,6 +126,18 @@ public sealed class InterfacePopupForm : Form
         RefreshInterfaces();
     }
 
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            Hide();
+            return;
+        }
+
+        base.OnFormClosing(e);
+    }
+
     private void PositionNearTray()
     {
         var screen = Screen.FromPoint(Cursor.Position);
@@ -129,6 +147,11 @@ public sealed class InterfacePopupForm : Form
 
     private void RefreshInterfaces()
     {
+        if (IsDisposed)
+        {
+            return;
+        }
+
         IReadOnlyList<NetworkInterfaceInfo> interfaces;
 
         try

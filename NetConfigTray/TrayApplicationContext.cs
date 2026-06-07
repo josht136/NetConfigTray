@@ -7,9 +7,10 @@ namespace NetConfigTray;
 public sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly NotifyIcon _notifyIcon;
-    private readonly InterfacePopupForm _popupForm;
     private readonly NetworkInfoService _networkInfoService;
     private readonly ToolStripMenuItem _autostartMenuItem;
+    private InterfacePopupForm? _popupForm;
+    private bool _isExiting;
 
     public TrayApplicationContext()
     {
@@ -31,7 +32,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         var contextMenu = new ContextMenuStrip();
-        contextMenu.Items.Add(new ToolStripMenuItem("Open", null, (_, _) => _popupForm.ShowNearTray()));
+        contextMenu.Items.Add(new ToolStripMenuItem("Open", null, (_, _) => ShowPopup()));
         contextMenu.Items.Add(_autostartMenuItem);
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => Exit()));
@@ -51,24 +52,55 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (e.Button == MouseButtons.Left)
         {
-            _popupForm.ShowNearTray();
+            ShowPopup();
         }
+    }
+
+    private void ShowPopup()
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        if (_popupForm is null || _popupForm.IsDisposed)
+        {
+            _popupForm = new InterfacePopupForm(_networkInfoService);
+        }
+
+        _popupForm.ShowNearTray();
     }
 
     private void Exit()
     {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        _isExiting = true;
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
-        _popupForm.Dispose();
+
+        if (_popupForm is { IsDisposed: false })
+        {
+            _popupForm.Dispose();
+        }
+
+        _popupForm = null;
         ExitThread();
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
+        if (disposing && !_isExiting)
         {
             _notifyIcon.Dispose();
-            _popupForm.Dispose();
+
+            if (_popupForm is { IsDisposed: false })
+            {
+                _popupForm.Dispose();
+            }
         }
 
         base.Dispose(disposing);
