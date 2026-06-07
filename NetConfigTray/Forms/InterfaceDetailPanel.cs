@@ -292,8 +292,8 @@ public sealed class InterfaceDetailPanel : Panel
             Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
             ForeColor = isDhcp ? Color.FromArgb(16, 124, 16) : Color.FromArgb(202, 80, 16),
             BackColor = isDhcp ? Color.FromArgb(223, 246, 221) : Color.FromArgb(255, 236, 224),
-            AutoSize = false,
-            Size = new Size(56, 24),
+            AutoSize = true,
+            Padding = new Padding(10, 4, 10, 4),
             TextAlign = ContentAlignment.MiddleCenter,
             Location = new Point(0, y)
         };

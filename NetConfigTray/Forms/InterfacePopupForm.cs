@@ -18,6 +18,7 @@ public sealed class InterfacePopupForm : Form
     private bool _forceClose;
     private string _lastListSignature = string.Empty;
     private string _lastDetailLayoutSignature = string.Empty;
+    private bool _splitterInitialized;
 
     public InterfacePopupForm(AppServices services)
     {
@@ -117,11 +118,7 @@ public sealed class InterfacePopupForm : Form
         Controls.Add(_splitContainer);
         ResumeLayout(false);
 
-        Load += (_, _) =>
-        {
-            ConfigureSplitterLayout();
-            ApplySnapshotToUi();
-        };
+        Load += (_, _) => ApplySnapshotToUi();
 
         _fastRefreshTimer = new System.Windows.Forms.Timer { Interval = 2000 };
         _fastRefreshTimer.Tick += (_, _) => UpdateThroughputOnly();
@@ -133,6 +130,7 @@ public sealed class InterfacePopupForm : Form
 
         Shown += (_, _) =>
         {
+            ConfigureSplitterLayout();
             _services.PublicIp.RefreshAsync();
             ForceRefresh(includeSlowDetails: false);
             _fastRefreshTimer.Start();
@@ -169,6 +167,7 @@ public sealed class InterfacePopupForm : Form
         WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
+        ConfigureSplitterLayout();
         ApplySnapshotToUi();
         ForceRefresh(includeSlowDetails: false);
     }
@@ -213,26 +212,43 @@ public sealed class InterfacePopupForm : Form
 
         const int panel1Min = 140;
         const int panel2Min = 240;
-        const int preferredDistance = 220;
 
         _splitContainer.Panel1MinSize = 0;
         _splitContainer.Panel2MinSize = 0;
 
-        var maxDistance = _splitContainer.Width - _splitContainer.SplitterWidth;
-        _splitContainer.SplitterDistance = Math.Clamp(
-            preferredDistance,
-            0,
-            Math.Max(0, maxDistance));
+        var available = _splitContainer.Width - _splitContainer.SplitterWidth;
+        if (available <= 0)
+        {
+            return;
+        }
 
-        if (maxDistance < panel1Min + panel2Min)
+        if (!_splitterInitialized)
+        {
+            var half = available / 2;
+            _splitContainer.SplitterDistance = Math.Clamp(
+                half,
+                0,
+                Math.Max(0, available));
+            _splitterInitialized = true;
+        }
+
+        if (available < panel1Min + panel2Min)
         {
             return;
         }
 
         _splitContainer.Panel1MinSize = panel1Min;
         _splitContainer.Panel2MinSize = panel2Min;
-        maxDistance = _splitContainer.Width - panel2Min - _splitContainer.SplitterWidth;
-        _splitContainer.SplitterDistance = Math.Clamp(preferredDistance, panel1Min, maxDistance);
+
+        var maxDistance = available - panel2Min;
+        if (_splitContainer.SplitterDistance < panel1Min)
+        {
+            _splitContainer.SplitterDistance = panel1Min;
+        }
+        else if (_splitContainer.SplitterDistance > maxDistance)
+        {
+            _splitContainer.SplitterDistance = maxDistance;
+        }
     }
 
     public void ForceClose()
