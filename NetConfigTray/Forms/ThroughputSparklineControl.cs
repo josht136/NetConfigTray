@@ -117,7 +117,7 @@ public sealed class ThroughputSparklineControl : Control
 
         TextRenderer.DrawText(
             graphics,
-            "0 B/s",
+            "0 bps",
             AppTheme.FontSmall,
             new Rectangle(graphLeft, graphBottom + 4, graphWidth, 14),
             AppTheme.TextMuted,

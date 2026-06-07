@@ -39,16 +39,17 @@ public static class FormatHelper
     {
         if (bytesPerSecond <= 0)
         {
-            return "0 B/s";
+            return "0 bps";
         }
 
-        string[] units = ["B/s", "KB/s", "MB/s", "GB/s"];
-        var value = (double)bytesPerSecond;
+        // Network throughput is conventionally expressed in bits/second.
+        string[] units = ["bps", "Kbps", "Mbps", "Gbps"];
+        var value = bytesPerSecond * 8.0;
         var unit = 0;
 
-        while (value >= 1024 && unit < units.Length - 1)
+        while (value >= 1000 && unit < units.Length - 1)
         {
-            value /= 1024;
+            value /= 1000;
             unit++;
         }
 
