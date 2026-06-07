@@ -13,8 +13,14 @@
     <Company>NetConfigTray</Company>
     <Product>NetConfigTray</Product>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <UseAppHost>false</UseAppHost>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <!-- Re-enable apphost (.exe) only when publishing a release build -->
+  <PropertyGroup Condition="'$(PublishProtocol)' != '' or '$(RuntimeIdentifier)' != ''">
+    <UseAppHost>true</UseAppHost>
   </PropertyGroup>
 
   <ItemGroup>

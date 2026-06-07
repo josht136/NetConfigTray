@@ -5,8 +5,27 @@ namespace NetConfigTray.Services;
 
 public sealed class WifiDetailsService
 {
+    private static readonly TimeSpan CacheLifetime = TimeSpan.FromSeconds(30);
+    private static string? _cachedOutput;
+    private static DateTime _cachedAt = DateTime.MinValue;
+    private static readonly object CacheLock = new();
+
     public WifiDetails? GetDetails(string interfaceName)
     {
+        var output = GetNetshOutput();
+        return output is null ? null : ParseOutput(output, interfaceName);
+    }
+
+    private static string? GetNetshOutput()
+    {
+        lock (CacheLock)
+        {
+            if (_cachedOutput is not null && DateTime.UtcNow - _cachedAt < CacheLifetime)
+            {
+                return _cachedOutput;
+            }
+        }
+
         try
         {
             var startInfo = new ProcessStartInfo
@@ -22,16 +41,43 @@ public sealed class WifiDetailsService
             using var process = Process.Start(startInfo);
             if (process is null)
             {
-                return null;
+                return GetCachedOutput();
+            }
+
+            if (!process.WaitForExit(1500))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best effort timeout handling.
+                }
+
+                return GetCachedOutput();
             }
 
             var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(3000);
-            return ParseOutput(output, interfaceName);
+            lock (CacheLock)
+            {
+                _cachedOutput = output;
+                _cachedAt = DateTime.UtcNow;
+            }
+
+            return output;
         }
         catch
         {
-            return null;
+            return GetCachedOutput();
+        }
+    }
+
+    private static string? GetCachedOutput()
+    {
+        lock (CacheLock)
+        {
+            return _cachedOutput;
         }
     }
 

@@ -66,14 +66,20 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
 
         _notifyIcon.MouseClick += OnNotifyIconMouseClick;
+        _services.Snapshot.SnapshotUpdated += UpdateTrayFromSnapshot;
 
         _trayRefreshTimer = new System.Windows.Forms.Timer { Interval = 5000 };
-        _trayRefreshTimer.Tick += (_, _) => RefreshTrayState();
+        _trayRefreshTimer.Tick += (_, _) =>
+        {
+            _services.PublicIp.RefreshAsync();
+            _services.Snapshot.EnsureFresh(TimeSpan.FromSeconds(4));
+        };
         _trayRefreshTimer.Start();
-        RefreshTrayState();
+
+        _services.Snapshot.RequestRefresh(includeSlowDetails: false);
     }
 
-    private void RefreshTrayState()
+    private void UpdateTrayFromSnapshot()
     {
         if (_isExiting)
         {
@@ -82,9 +88,8 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         try
         {
-            _services.PublicIp.RefreshAsync();
-            var interfaces = _services.NetworkInfo.GetActiveInterfaces();
-            var primary = interfaces.FirstOrDefault(i => i.IsPrimary) ?? interfaces.FirstOrDefault();
+            var interfaces = _services.Snapshot.GetSnapshot();
+            var primary = _services.Snapshot.GetPrimaryInterface();
 
             if (_notificationsMenuItem.Checked)
             {
@@ -184,7 +189,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         _popupForm = null;
         _currentTrayIcon?.Dispose();
-        _services.PublicIp.Dispose();
+        _services.Dispose();
         _hostForm.Close();
         ExitThread();
     }
@@ -196,7 +201,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             _trayRefreshTimer.Dispose();
             _notifyIcon.Dispose();
             _currentTrayIcon?.Dispose();
-            _services.PublicIp.Dispose();
+            _services.Dispose();
 
             if (_popupForm is { IsDisposed: false })
             {

@@ -9,7 +9,16 @@ namespace NetConfigTray.Services;
 
 public sealed class ConnectedDeviceService
 {
-    public ConnectedDeviceInfo? GetConnectedDevice(NetworkInterface networkInterface, string gateway)
+    private static readonly TimeSpan NetshCacheLifetime = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan GatewayCacheLifetime = TimeSpan.FromSeconds(60);
+
+    private static string? _cachedNetshOutput;
+    private static DateTime _cachedNetshAt = DateTime.MinValue;
+    private static readonly object NetshLock = new();
+
+    private readonly Dictionary<string, (ConnectedDeviceInfo Info, DateTime CachedAt)> _gatewayCache = new(StringComparer.OrdinalIgnoreCase);
+
+    public ConnectedDeviceInfo? GetConnectedDevice(NetworkInterface networkInterface, string gateway, bool resolveHostname = false)
     {
         if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
         {
@@ -18,7 +27,7 @@ public sealed class ConnectedDeviceService
 
         if (IsWiredInterface(networkInterface.NetworkInterfaceType))
         {
-            return GetWiredUpstreamDevice(gateway);
+            return GetWiredUpstreamDevice(gateway, resolveHostname);
         }
 
         return null;
@@ -32,24 +41,43 @@ public sealed class ConnectedDeviceService
             or NetworkInterfaceType.FastEthernetT;
     }
 
-    private static ConnectedDeviceInfo? GetWiredUpstreamDevice(string gateway)
+    private ConnectedDeviceInfo? GetWiredUpstreamDevice(string gateway, bool resolveHostname)
     {
+        if (string.IsNullOrWhiteSpace(gateway))
+        {
+            return null;
+        }
+
+        if (_gatewayCache.TryGetValue(gateway, out var cached) &&
+            DateTime.UtcNow - cached.CachedAt < GatewayCacheLifetime &&
+            (!resolveHostname || cached.Info.Hostname is not null))
+        {
+            return cached.Info;
+        }
+
         if (!IPAddress.TryParse(gateway, out var gatewayIp))
         {
             return null;
         }
 
         var mac = ArpHelper.ResolveMacAddress(gatewayIp);
-        var hostname = ArpHelper.ResolveHostname(gatewayIp);
+        string? hostname = null;
+        if (resolveHostname)
+        {
+            hostname = ArpHelper.ResolveHostname(gatewayIp, TimeSpan.FromMilliseconds(750));
+        }
 
-        return new ConnectedDeviceInfo
+        var info = new ConnectedDeviceInfo
         {
             Role = "Upstream device (gateway)",
             IpAddress = gateway,
             Hostname = hostname,
             MacAddress = mac,
-            ExtraInfo = mac is null ? "ARP lookup pending — try Refresh" : null
+            ExtraInfo = mac is null ? "ARP lookup pending — expand or refresh" : null
         };
+
+        _gatewayCache[gateway] = (info, DateTime.UtcNow);
+        return info;
     }
 
     private static ConnectedDeviceInfo? GetWifiAccessPoint(string interfaceName, string gateway)
@@ -57,7 +85,7 @@ public sealed class ConnectedDeviceService
         var wifiInfo = ParseWifiInterfaceInfo(interfaceName);
         if (wifiInfo is not { } wifi)
         {
-            return GetWiredUpstreamDevice(gateway);
+            return null;
         }
 
         return new ConnectedDeviceInfo
@@ -72,6 +100,21 @@ public sealed class ConnectedDeviceService
 
     private static WifiInterfaceInfo? ParseWifiInterfaceInfo(string interfaceName)
     {
+        var output = GetNetshOutput();
+        return output is null ? null : ParseWifiOutput(output, interfaceName);
+    }
+
+    private static string? GetNetshOutput()
+    {
+        lock (NetshLock)
+        {
+            if (_cachedNetshOutput is not null &&
+                DateTime.UtcNow - _cachedNetshAt < NetshCacheLifetime)
+            {
+                return _cachedNetshOutput;
+            }
+        }
+
         try
         {
             var startInfo = new ProcessStartInfo
@@ -90,14 +133,44 @@ public sealed class ConnectedDeviceService
                 return null;
             }
 
-            var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(3000);
+            if (!process.WaitForExit(1500))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best effort timeout handling.
+                }
 
-            return ParseWifiOutput(output, interfaceName);
+                return GetCachedNetshOutput();
+            }
+
+            var output = process.StandardOutput.ReadToEnd();
+            CacheNetshOutput(output);
+            return output;
         }
         catch
         {
-            return null;
+            return GetCachedNetshOutput();
+        }
+    }
+
+    private static string? GetCachedNetshOutput()
+    {
+        lock (NetshLock)
+        {
+            return _cachedNetshOutput;
+        }
+    }
+
+    private static void CacheNetshOutput(string output)
+    {
+        lock (NetshLock)
+        {
+            _cachedNetshOutput = output;
+            _cachedNetshAt = DateTime.UtcNow;
         }
     }
 

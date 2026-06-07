@@ -105,6 +105,14 @@ public sealed class InterfaceCardPanel : Panel
         IReadOnlyList<long> downloadHistory,
         bool expanded)
     {
+        var detailsChanged = _info is null ||
+            _info.Id != info.Id ||
+            _info.IPv4Address != info.IPv4Address ||
+            _info.ConfigurationType != info.ConfigurationType ||
+            _info.Gateway != info.Gateway ||
+            _info.ConnectedDevice?.MacAddress != info.ConnectedDevice?.MacAddress ||
+            _info.ConnectedDevice?.Hostname != info.ConnectedDevice?.Hostname;
+
         _info = info;
         _downloadBps = downloadBps;
         _uploadBps = uploadBps;
@@ -122,10 +130,64 @@ public sealed class InterfaceCardPanel : Panel
             IsExpanded = expanded;
             _detailsPanel.Visible = expanded;
             _hintLabel.Text = expanded ? "Click to collapse" : "Click for details";
+            detailsChanged = true;
         }
 
-        RebuildDetails(downloadHistory);
+        if (detailsChanged)
+        {
+            RebuildDetails(downloadHistory);
+        }
+        else if (IsExpanded)
+        {
+            UpdateThroughput(downloadBps, uploadBps, downloadHistory);
+        }
+
         UpdateHeight();
+    }
+
+    public void UpdateThroughput(long downloadBps, long uploadBps, IReadOnlyList<long> downloadHistory)
+    {
+        _downloadBps = downloadBps;
+        _uploadBps = uploadBps;
+
+        if (!IsExpanded || _info is null)
+        {
+            return;
+        }
+
+        UpdateDetailValue("Download", FormatHelper.FormatThroughput(_downloadBps));
+        UpdateDetailValue("Upload", FormatHelper.FormatThroughput(_uploadBps));
+
+        foreach (Control control in _detailsPanel.Controls)
+        {
+            if (control is ThroughputSparklineControl sparkline)
+            {
+                sparkline.SetSamples(downloadHistory);
+                break;
+            }
+        }
+    }
+
+    private void UpdateDetailValue(string labelText, string value)
+    {
+        foreach (Control control in _detailsPanel.Controls)
+        {
+            if (control is Label label &&
+                (label.Font.Style & FontStyle.Bold) != 0 &&
+                string.Equals(label.Text, labelText, StringComparison.Ordinal))
+            {
+                var valueLabel = _detailsPanel.Controls
+                    .OfType<Label>()
+                    .FirstOrDefault(l => l.Location.Y == label.Location.Y + 14);
+
+                if (valueLabel is not null)
+                {
+                    valueLabel.Text = value;
+                }
+
+                break;
+            }
+        }
     }
 
     public void SetExpanded(bool expanded)
