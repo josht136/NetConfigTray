@@ -89,7 +89,7 @@ public sealed class InterfacePopupForm : Form
         _interfaceList.Columns.Add("Interface", 120);
         _interfaceList.Columns.Add("Address", 110);
         _interfaceList.Columns.Add("Config", 60);
-        _interfaceList.SelectedIndexChanged += (_, _) => OnInterfaceSelected();
+        _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
 
         _splitContainer.Panel1.Controls.Add(_interfaceList);
         _splitContainer.Panel1.BackColor = Color.White;
@@ -373,7 +373,7 @@ public sealed class InterfacePopupForm : Form
                 _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
             }
 
-            OnInterfaceSelected();
+            OnInterfaceSelected(_interfaceList, EventArgs.Empty);
         }
         catch (Exception ex)
         {
@@ -417,7 +417,7 @@ public sealed class InterfacePopupForm : Form
         _interfaceList.Items[0].Selected = true;
     }
 
-    private void OnInterfaceSelected()
+    private void OnInterfaceSelected(object? sender, EventArgs e)
     {
         if (_interfaceList.SelectedItems.Count == 0)
         {
