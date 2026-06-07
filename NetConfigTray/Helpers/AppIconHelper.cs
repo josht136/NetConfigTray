@@ -19,9 +19,9 @@ public static class AppIconHelper
 
         var backgroundColor = configurationType switch
         {
-            IpConfigurationType.Dhcp => Color.FromArgb(16, 124, 16),
-            IpConfigurationType.Static => Color.FromArgb(202, 80, 16),
-            _ => Color.FromArgb(0, 120, 215)
+            IpConfigurationType.Dhcp => Color.FromArgb(133, 153, 0),
+            IpConfigurationType.Static => Color.FromArgb(203, 75, 22),
+            _ => Color.FromArgb(42, 161, 152)
         };
 
         using var backgroundBrush = new SolidBrush(backgroundColor);
