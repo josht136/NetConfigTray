@@ -16,6 +16,7 @@ public sealed class InterfacePopupForm : Form
     private readonly Dictionary<string, NetworkInterfaceInfo> _interfacesById = new(StringComparer.OrdinalIgnoreCase);
     private string? _selectedInterfaceId;
     private bool _forceClose;
+    private string _lastListSignature = string.Empty;
 
     public InterfacePopupForm(AppServices services)
     {
@@ -121,8 +122,6 @@ public sealed class InterfacePopupForm : Form
             ApplySnapshotToUi();
         };
 
-        Resize += (_, _) => ConfigureSplitterLayout();
-
         _fastRefreshTimer = new System.Windows.Forms.Timer { Interval = 2000 };
         _fastRefreshTimer.Tick += (_, _) => UpdateThroughputOnly();
 
@@ -133,8 +132,6 @@ public sealed class InterfacePopupForm : Form
 
         Shown += (_, _) =>
         {
-            ConfigureSplitterLayout();
-            ApplySnapshotToUi();
             _services.PublicIp.RefreshAsync();
             ForceRefresh(includeSlowDetails: false);
             _fastRefreshTimer.Start();
@@ -171,7 +168,6 @@ public sealed class InterfacePopupForm : Form
         WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
-        ConfigureSplitterLayout();
         ApplySnapshotToUi();
         ForceRefresh(includeSlowDetails: false);
     }
@@ -317,68 +313,110 @@ public sealed class InterfacePopupForm : Form
                 ? $"{AppBranding.ShortName} — refreshing…"
                 : $"{AppBranding.ShortName} · Public IP {_services.PublicIp.GetDisplayText()} · Updated {DateTime.Now:t}";
 
-            var previousSelection = _selectedInterfaceId;
-            _interfaceList.BeginUpdate();
-            try
+            var listSignature = BuildListSignature(interfaces);
+            var listChanged = !string.Equals(listSignature, _lastListSignature, StringComparison.Ordinal);
+
+            if (listChanged)
             {
-                foreach (ListViewItem item in _interfaceList.Items)
+                _lastListSignature = listSignature;
+                var previousSelection = _selectedInterfaceId;
+
+                _interfaceList.BeginUpdate();
+                try
                 {
-                    if (item.Font != _interfaceList.Font)
+                    _interfaceList.Items.Clear();
+
+                    foreach (var info in interfaces)
                     {
-                        item.Font.Dispose();
+                        var item = new ListViewItem(info.IsPrimary ? $"{info.Name} *" : info.Name)
+                        {
+                            Tag = info.Id
+                        };
+                        item.SubItems.Add(info.IPv4Address);
+                        item.SubItems.Add(info.ConfigurationLabel);
+                        _interfaceList.Items.Add(item);
                     }
                 }
-
-                _interfaceList.Items.Clear();
-
-                foreach (var info in interfaces)
+                finally
                 {
-                    var item = new ListViewItem(info.Name)
-                    {
-                        Tag = info.Id
-                    };
-                    item.SubItems.Add(info.IPv4Address);
-                    item.SubItems.Add(info.ConfigurationLabel);
-                    if (info.IsPrimary)
-                    {
-                        item.Font = new Font(_interfaceList.Font, FontStyle.Bold);
-                    }
+                    _interfaceList.EndUpdate();
+                }
 
-                    _interfaceList.Items.Add(item);
+                if (interfaces.Count == 0)
+                {
+                    _selectedInterfaceId = null;
+                    _detailPanel.ShowPlaceholder("No active interfaces found. Click Refresh to try again.");
+                    return;
+                }
+
+                var targetId = previousSelection
+                    ?? interfaces.FirstOrDefault(i => i.IsPrimary)?.Id
+                    ?? interfaces[0].Id;
+
+                _interfaceList.SelectedIndexChanged -= OnInterfaceSelected;
+                try
+                {
+                    SelectInterface(targetId);
+                }
+                finally
+                {
+                    _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
                 }
             }
-            finally
-            {
-                _interfaceList.EndUpdate();
-            }
 
-            if (interfaces.Count == 0)
+            if (interfaces.Count > 0)
             {
-                _selectedInterfaceId = null;
-                _detailPanel.ShowPlaceholder("No active interfaces found. Click Refresh to try again.");
-                return;
+                UpdateDetailPanelForSelection();
             }
-
-            var targetId = previousSelection
-                ?? interfaces.FirstOrDefault(i => i.IsPrimary)?.Id
-                ?? interfaces[0].Id;
-
-            _interfaceList.SelectedIndexChanged -= OnInterfaceSelected;
-            try
-            {
-                SelectInterface(targetId);
-            }
-            finally
-            {
-                _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
-            }
-
-            OnInterfaceSelected(_interfaceList, EventArgs.Empty);
         }
         catch (Exception ex)
         {
             _statusLabel.Text = $"{AppBranding.ShortName} — update failed: {ex.Message}";
             _detailPanel.ShowPlaceholder("Unable to display network details. Try Refresh again.");
+        }
+    }
+
+    private static string BuildListSignature(IReadOnlyList<NetworkInterfaceInfo> interfaces)
+    {
+        return string.Join("|", interfaces.Select(i => i.ChangeSignature));
+    }
+
+    private void UpdateDetailPanelForSelection()
+    {
+        if (_interfaceList.SelectedItems.Count == 0)
+        {
+            _detailPanel.ShowPlaceholder("Select an interface to view details.");
+            return;
+        }
+
+        var selectedId = _interfaceList.SelectedItems[0].Tag as string;
+        if (string.IsNullOrWhiteSpace(selectedId) ||
+            !_interfacesById.TryGetValue(selectedId, out var info))
+        {
+            return;
+        }
+
+        _selectedInterfaceId = selectedId;
+
+        if (info.ConnectedDevice is null)
+        {
+            _services.Snapshot.RequestConnectedDevice(selectedId);
+        }
+
+        try
+        {
+            var (downloadBps, uploadBps) = _services.Throughput.GetThroughput(
+                info.Id,
+                info.BytesReceived,
+                info.BytesSent);
+
+            _services.ThroughputHistory.AddSample(info.Id, downloadBps, uploadBps);
+            var history = _services.ThroughputHistory.GetDownloadHistory(info.Id);
+            _detailPanel.Bind(info, downloadBps, uploadBps, history);
+        }
+        catch (Exception ex)
+        {
+            _detailPanel.ShowPlaceholder($"Unable to show details: {ex.Message}");
         }
     }
 
@@ -419,37 +457,7 @@ public sealed class InterfacePopupForm : Form
 
     private void OnInterfaceSelected(object? sender, EventArgs e)
     {
-        if (_interfaceList.SelectedItems.Count == 0)
-        {
-            _detailPanel.ShowPlaceholder("Select an interface to view details.");
-            return;
-        }
-
-        var selectedId = _interfaceList.SelectedItems[0].Tag as string;
-        if (string.IsNullOrWhiteSpace(selectedId) ||
-            !_interfacesById.TryGetValue(selectedId, out var info))
-        {
-            return;
-        }
-
-        _selectedInterfaceId = selectedId;
-        _services.Snapshot.RequestConnectedDevice(selectedId);
-
-        try
-        {
-            var (downloadBps, uploadBps) = _services.Throughput.GetThroughput(
-                info.Id,
-                info.BytesReceived,
-                info.BytesSent);
-
-            _services.ThroughputHistory.AddSample(info.Id, downloadBps, uploadBps);
-            var history = _services.ThroughputHistory.GetDownloadHistory(info.Id);
-            _detailPanel.Bind(info, downloadBps, uploadBps, history);
-        }
-        catch (Exception ex)
-        {
-            _detailPanel.ShowPlaceholder($"Unable to show details: {ex.Message}");
-        }
+        UpdateDetailPanelForSelection();
     }
 
     private NetworkInterfaceInfo EnrichInterface(NetworkInterfaceInfo info)

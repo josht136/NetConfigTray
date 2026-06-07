@@ -6,6 +6,7 @@ public sealed class NetworkSnapshotService
 {
     private readonly NetworkInfoService _networkInfo;
     private readonly object _lock = new();
+    private readonly HashSet<string> _connectedDeviceInProgress = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<NetworkInterfaceInfo> _snapshot = Array.Empty<NetworkInterfaceInfo>();
     private NetworkInterfaceInfo? _primary;
     private int _refreshInProgress;
@@ -65,6 +66,7 @@ public sealed class NetworkSnapshotService
         {
             var includeSlow = includeSlowDetails || _queuedIncludeSlowDetails;
             _queuedIncludeSlowDetails = false;
+            var shouldNotify = false;
 
             try
             {
@@ -77,6 +79,7 @@ public sealed class NetworkSnapshotService
 
                 lock (_lock)
                 {
+                    shouldNotify = !SnapshotsEquivalent(_snapshot, interfaces);
                     _snapshot = interfaces;
                     _primary = primary;
                     _lastRefresh = DateTime.UtcNow;
@@ -85,11 +88,16 @@ public sealed class NetworkSnapshotService
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Network refresh failed: {ex}");
+                shouldNotify = true;
             }
             finally
             {
                 Interlocked.Exchange(ref _refreshInProgress, 0);
-                SnapshotUpdated?.Invoke();
+
+                if (shouldNotify)
+                {
+                    SnapshotUpdated?.Invoke();
+                }
 
                 if (_queuedRefresh || _queuedIncludeSlowDetails)
                 {
@@ -109,6 +117,26 @@ public sealed class NetworkSnapshotService
 
     public void RequestConnectedDevice(string interfaceId)
     {
+        if (string.IsNullOrWhiteSpace(interfaceId))
+        {
+            return;
+        }
+
+        lock (_lock)
+        {
+            var existing = _snapshot.FirstOrDefault(info =>
+                string.Equals(info.Id, interfaceId, StringComparison.OrdinalIgnoreCase));
+            if (existing?.ConnectedDevice is not null)
+            {
+                return;
+            }
+
+            if (!_connectedDeviceInProgress.Add(interfaceId))
+            {
+                return;
+            }
+        }
+
         Task.Run(() =>
         {
             try
@@ -119,20 +147,79 @@ public sealed class NetworkSnapshotService
                     return;
                 }
 
+                var shouldNotify = false;
                 lock (_lock)
                 {
+                    var current = _snapshot.FirstOrDefault(info =>
+                        string.Equals(info.Id, interfaceId, StringComparison.OrdinalIgnoreCase));
+                    if (current?.ConnectedDevice is not null &&
+                        ConnectedDevicesEquivalent(current.ConnectedDevice, updated.ConnectedDevice))
+                    {
+                        return;
+                    }
+
                     _snapshot = _snapshot
                         .Select(info => info.Id == interfaceId ? updated : info)
                         .ToList();
+                    shouldNotify = true;
                 }
 
-                SnapshotUpdated?.Invoke();
+                if (shouldNotify)
+                {
+                    SnapshotUpdated?.Invoke();
+                }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Connected device refresh failed: {ex}");
             }
+            finally
+            {
+                lock (_lock)
+                {
+                    _connectedDeviceInProgress.Remove(interfaceId);
+                }
+            }
         });
+    }
+
+    private static bool SnapshotsEquivalent(
+        IReadOnlyList<NetworkInterfaceInfo> left,
+        IReadOnlyList<NetworkInterfaceInfo> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (!string.Equals(left[i].ChangeSignature, right[i].ChangeSignature, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool ConnectedDevicesEquivalent(ConnectedDeviceInfo? left, ConnectedDeviceInfo? right)
+    {
+        if (left is null && right is null)
+        {
+            return true;
+        }
+
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        return left.Role == right.Role
+            && left.IpAddress == right.IpAddress
+            && left.Hostname == right.Hostname
+            && left.MacAddress == right.MacAddress
+            && left.ExtraInfo == right.ExtraInfo;
     }
 
     private DateTime _lastRefresh = DateTime.MinValue;

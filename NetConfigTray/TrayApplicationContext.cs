@@ -15,6 +15,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private InterfacePopupForm? _mainWindow;
     private bool _isExiting;
     private Icon? _currentTrayIcon;
+    private IpConfigurationType? _lastTrayConfigType;
 
     public TrayApplicationContext()
     {
@@ -119,11 +120,14 @@ public sealed class TrayApplicationContext : ApplicationContext
             }
 
             var configType = primary?.ConfigurationType;
-            var newIcon = AppIconHelper.CreateTrayIcon(configType);
-
-            _notifyIcon.Icon = newIcon;
-            _currentTrayIcon?.Dispose();
-            _currentTrayIcon = newIcon;
+            if (configType != _lastTrayConfigType || _currentTrayIcon is null)
+            {
+                var newIcon = AppIconHelper.CreateTrayIcon(configType);
+                _notifyIcon.Icon = newIcon;
+                _currentTrayIcon?.Dispose();
+                _currentTrayIcon = newIcon;
+                _lastTrayConfigType = configType;
+            }
 
             if (primary is not null)
             {
