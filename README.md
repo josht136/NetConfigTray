@@ -5,9 +5,12 @@ A lightweight Windows system tray app that shows active network interfaces with 
 ## Features
 
 - **System tray icon** — shows **D** (DHCP) or **S** (Static) for the primary interface
-- **Click to view** — left-click the tray icon to open a popup with interface details
+- **Tray interface list** — left-click the tray icon to list interfaces (name, DHCP/Static, IP); click one to open the full window on that interface
 - **Per-interface info** — name, IPv4, Static/DHCP, and expandable details
 - **Interface details** — CIDR, MAC, link speed, live upload/download, gateway, DNS
+- **Gateway & DNS ping** — round-trip latency to the default gateway and primary DNS server
+- **Interface context menu** — right-click an interface for LAN scan, renew/release DHCP, flush DNS, traceroute, continuous ping, and `ipconfig /all`
+- **LAN scan** — AngryIP-style ping sweep of the interface subnet (IP, latency, hostname, MAC), with a large-network warning
 - **Connected device** — upstream gateway on Ethernet; AP BSSID/SSID/signal on Wi-Fi
 - **Copy support** — copy individual fields or all details for an interface
 - **DHCP lease info** — server, obtained, and expiry times

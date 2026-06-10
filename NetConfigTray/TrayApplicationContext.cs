@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using NetConfigTray.Forms;
 using NetConfigTray.Helpers;
 using NetConfigTray.Models;
@@ -7,10 +8,14 @@ namespace NetConfigTray;
 
 public sealed class TrayApplicationContext : ApplicationContext
 {
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
     private readonly AppServices _services = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _autostartMenuItem;
     private readonly ToolStripMenuItem _notificationsMenuItem;
+    private readonly ContextMenuStrip _interfaceMenu = new();
     private readonly Form _hostForm;
     private readonly System.Windows.Forms.Timer _trayRefreshTimer;
     private InterfacePopupForm? _mainWindow;
@@ -150,11 +155,51 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (e.Button == MouseButtons.Left)
         {
-            ShowMainWindow();
+            ShowInterfaceMenu();
         }
     }
 
-    private void ShowMainWindow()
+    private void ShowInterfaceMenu()
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        _services.Snapshot.EnsureFresh(TimeSpan.FromSeconds(4));
+        var interfaces = _services.Snapshot.GetSnapshot();
+
+        _interfaceMenu.Items.Clear();
+
+        var header = new ToolStripMenuItem(interfaces.Count == 0
+            ? "No active interfaces"
+            : "Select an interface")
+        {
+            Enabled = false
+        };
+        _interfaceMenu.Items.Add(header);
+        _interfaceMenu.Items.Add(new ToolStripSeparator());
+
+        foreach (var info in interfaces)
+        {
+            var label = $"{info.Name}   ·   {info.ConfigurationLabel}   ·   {info.IPv4Address}";
+            var id = info.Id;
+            var item = new ToolStripMenuItem(label, null, (_, _) => ShowMainWindow(id))
+            {
+                ToolTipText = $"{info.Name} ({info.ConfigurationLabel}) — open details"
+            };
+            _interfaceMenu.Items.Add(item);
+        }
+
+        _interfaceMenu.Items.Add(new ToolStripSeparator());
+        _interfaceMenu.Items.Add(new ToolStripMenuItem($"Open {AppBranding.ShortName} window", null, (_, _) => ShowMainWindow()));
+
+        // Bring the (hidden) host window to the foreground so the popup dismisses on focus loss.
+        SetForegroundWindow(_hostForm.Handle);
+        _interfaceMenu.Show(Cursor.Position);
+    }
+
+    private void ShowMainWindow(string? selectInterfaceId = null)
     {
         if (_isExiting)
         {
@@ -162,7 +207,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         EnsureMainWindow();
-        _mainWindow!.ShowMainWindow();
+        _mainWindow!.ShowMainWindow(selectInterfaceId);
     }
 
     private void EnsureMainWindow()
@@ -193,6 +238,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _isExiting = true;
         _trayRefreshTimer.Stop();
         _trayRefreshTimer.Dispose();
+        _interfaceMenu.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
 
