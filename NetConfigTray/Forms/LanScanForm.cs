@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using NetConfigTray.Helpers;
 using NetConfigTray.Models;
+using NetConfigTray.Services;
 
 namespace NetConfigTray.Forms;
 
@@ -15,12 +16,14 @@ public sealed class LanScanForm : Form
     private const int Concurrency = 64;
     private const int PingTimeoutMs = 600;
 
+    private readonly AppServices? _services;
     private readonly NetworkInterfaceInfo _interface;
     private readonly ListView _results;
     private readonly ProgressBar _progress;
     private readonly Label _statusLabel;
     private readonly Button _scanButton;
     private readonly Button _copyButton;
+    private readonly ContextMenuStrip _hostMenu = new();
 
     private CancellationTokenSource? _cts;
     private bool _scanning;
@@ -29,8 +32,14 @@ public sealed class LanScanForm : Form
     private int _total;
 
     public LanScanForm(NetworkInterfaceInfo interfaceInfo)
+        : this(interfaceInfo, null)
+    {
+    }
+
+    public LanScanForm(NetworkInterfaceInfo interfaceInfo, AppServices? services)
     {
         _interface = interfaceInfo;
+        _services = services;
 
         Text = $"{AppBranding.ShortName} — LAN scan · {interfaceInfo.Name}";
         StartPosition = FormStartPosition.CenterParent;
@@ -100,6 +109,7 @@ public sealed class LanScanForm : Form
         _results.Columns.Add("PING", 90);
         _results.Columns.Add("HOSTNAME", 300);
         _results.Columns.Add("MAC", 180);
+        _results.MouseClick += OnResultsMouseClick;
 
         Controls.Add(_results);
         Controls.Add(toolbar);
@@ -107,6 +117,34 @@ public sealed class LanScanForm : Form
 
         FormClosing += (_, _) => _cts?.Cancel();
         Shown += (_, _) => BeginScan();
+    }
+
+    private void OnResultsMouseClick(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Right)
+        {
+            return;
+        }
+
+        var hit = _results.HitTest(e.Location);
+        if (hit.Item is null)
+        {
+            return;
+        }
+
+        hit.Item.Selected = true;
+        var ip = hit.Item.Text;
+
+        _hostMenu.Items.Clear();
+        _hostMenu.Items.Add(new ToolStripMenuItem($"Scan ports on {ip}…", null, (_, _) =>
+        {
+            if (_services is not null)
+            {
+                new PortScanForm(_services, ip).Show(this);
+            }
+        }) { Enabled = _services is not null });
+        _hostMenu.Items.Add(new ToolStripMenuItem("Copy IP address", null, (_, _) => ClipboardHelper.CopyText(ip)));
+        _hostMenu.Show(_results, e.Location);
     }
 
     private void OnScanButtonClicked()

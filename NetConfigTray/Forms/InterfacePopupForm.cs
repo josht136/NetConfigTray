@@ -777,7 +777,7 @@ public sealed class InterfacePopupForm : Form
 
         _interfaceContextMenu.Items.Add(new ToolStripMenuItem("LAN scan on this interface…", null, (_, _) =>
         {
-            var scan = new LanScanForm(info);
+            var scan = new LanScanForm(info, _services);
             scan.Show(this);
         }));
 
@@ -786,6 +786,16 @@ public sealed class InterfacePopupForm : Form
             var discovery = new NeighborDiscoveryForm(_services);
             discovery.Show(this);
         }));
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Latency monitor to gateway…", null, (_, _) =>
+        {
+            new LatencyMonitorForm(_services).Show(this);
+        }) { Enabled = hasGateway });
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Port scan gateway…", null, (_, _) =>
+        {
+            new PortScanForm(_services, info.Gateway).Show(this);
+        }) { Enabled = hasGateway });
 
         _interfaceContextMenu.Items.Add(new ToolStripSeparator());
 
