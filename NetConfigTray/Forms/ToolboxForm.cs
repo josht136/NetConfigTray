@@ -43,6 +43,7 @@ public sealed class ToolboxForm : Form
             Padding = new Padding(16, 16, 16, 16),
             BackColor = AppTheme.AppBackground
         };
+        _flow.ClientSizeChanged += (_, _) => ResizeCards();
 
         Controls.Add(_flow);
         Controls.Add(header);
@@ -65,18 +66,19 @@ public sealed class ToolboxForm : Form
         AddTool("Wi-Fi survey",
             "Scan nearby networks, channel usage, and least-congested channel.",
             OpenWifiSurvey);
+
+        Shown += (_, _) => ResizeCards();
     }
 
     private void AddTool(string name, string description, Action onClick)
     {
         var card = new Panel
         {
-            Width = _flow.ClientSize.Width - 40,
-            Height = 64,
+            Width = CardWidth(),
+            Height = 66,
             Margin = new Padding(0, 0, 0, 10),
             BackColor = AppTheme.Surface,
-            Cursor = Cursors.Hand,
-            Anchor = AnchorStyles.Left | AnchorStyles.Right
+            Cursor = Cursors.Hand
         };
         card.Paint += (_, e) =>
         {
@@ -84,41 +86,61 @@ public sealed class ToolboxForm : Form
             e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
         };
 
-        var nameLabel = new Label
-        {
-            Text = name,
-            Font = AppTheme.FontSection,
-            ForeColor = AppTheme.TextPrimary,
-            AutoSize = false,
-            Location = new Point(14, 10),
-            Size = new Size(card.Width - 28, 20),
-            BackColor = Color.Transparent
-        };
         var descLabel = new Label
         {
             Text = description,
             Font = AppTheme.FontSmall,
             ForeColor = AppTheme.TextMuted,
-            AutoSize = false,
-            Location = new Point(14, 32),
-            Size = new Size(card.Width - 28, 24),
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.TopLeft,
+            Padding = new Padding(14, 2, 12, 8),
+            BackColor = Color.Transparent
+        };
+        var nameLabel = new Label
+        {
+            Text = name,
+            Font = AppTheme.FontSection,
+            ForeColor = AppTheme.TextPrimary,
+            Dock = DockStyle.Top,
+            Height = 26,
+            TextAlign = ContentAlignment.BottomLeft,
+            Padding = new Padding(14, 0, 12, 0),
             BackColor = Color.Transparent
         };
 
         void Hover(bool on) => card.BackColor = on ? AppTheme.SurfaceHover : AppTheme.Surface;
 
-        card.Click += (_, _) => onClick();
-        nameLabel.Click += (_, _) => onClick();
-        descLabel.Click += (_, _) => onClick();
-        foreach (Control c in new Control[] { card, nameLabel, descLabel })
+        card.Controls.Add(descLabel);
+        card.Controls.Add(nameLabel);
+
+        foreach (var c in new Control[] { card, nameLabel, descLabel })
         {
+            c.Click += (_, _) => onClick();
             c.MouseEnter += (_, _) => Hover(true);
             c.MouseLeave += (_, _) => Hover(false);
         }
 
-        card.Controls.Add(nameLabel);
-        card.Controls.Add(descLabel);
         _flow.Controls.Add(card);
+    }
+
+    private int CardWidth()
+    {
+        var width = _flow.ClientSize.Width - _flow.Padding.Horizontal;
+        if (_flow.VerticalScroll.Visible)
+        {
+            width -= SystemInformation.VerticalScrollBarWidth;
+        }
+
+        return Math.Max(320, width);
+    }
+
+    private void ResizeCards()
+    {
+        var width = CardWidth();
+        foreach (Control card in _flow.Controls)
+        {
+            card.Width = width;
+        }
     }
 
     private void OpenConsole() => new ConsoleTerminalForm(_services).Show(this);

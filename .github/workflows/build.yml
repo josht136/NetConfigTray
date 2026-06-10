@@ -25,6 +25,23 @@ jobs:
       - name: Build
         run: dotnet build NetConfigTray.sln -c Release --no-restore
 
+      - name: Download iperf3 (bundled throughput tool)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://files.budman.pw/iperf3.17.1_64.zip'
+          $tools = 'NetConfigTray/tools/iperf3'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          try {
+            Invoke-WebRequest -Uri $url -OutFile iperf3.zip
+            Expand-Archive iperf3.zip -DestinationPath iperf3tmp -Force
+            $exe = Get-ChildItem iperf3tmp -Recurse -Filter iperf3.exe | Select-Object -First 1
+            if ($exe) { Copy-Item $exe.FullName (Join-Path $tools 'iperf3.exe') -Force }
+            Get-ChildItem iperf3tmp -Recurse -Filter '*.dll' | ForEach-Object { Copy-Item $_.FullName $tools -Force }
+          } catch {
+            Write-Warning "Could not download iperf3; it will not be bundled. $_"
+          }
+
       - name: Publish self-contained executable
         run: >
           dotnet publish NetConfigTray/NetConfigTray.csproj
@@ -34,8 +51,23 @@ jobs:
           -p:PublishSingleFile=true
           -o publish/win-x64
 
-      - name: Upload artifact
+      - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
           name: NetConfigTray-win-x64
           path: publish/win-x64/
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = '2.0.0'
+          & "$env:ChocolateyInstall\bin\iscc.exe" "/DAppVersion=$version" installer/TNT.iss
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: TNT-Setup
+          path: installer/Output/*.exe
