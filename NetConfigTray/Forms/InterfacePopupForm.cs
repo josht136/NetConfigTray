@@ -781,6 +781,12 @@ public sealed class InterfacePopupForm : Form
             scan.Show(this);
         }));
 
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Find switch / port (LLDP/CDP)…", null, (_, _) =>
+        {
+            var discovery = new NeighborDiscoveryForm(_services);
+            discovery.Show(this);
+        }));
+
         _interfaceContextMenu.Items.Add(new ToolStripSeparator());
 
         var renew = new ToolStripMenuItem("Renew DHCP lease", null, (_, _) =>
