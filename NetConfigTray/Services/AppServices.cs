@@ -10,6 +10,7 @@ public sealed class AppServices : IDisposable
     public PublicIpService PublicIp { get; } = new();
     public InterfaceUptimeService Uptime { get; } = new();
     public NetworkChangeNotifierService ChangeNotifier { get; } = new();
+    public SettingsStore Settings { get; } = new();
 
     public AppServices()
     {

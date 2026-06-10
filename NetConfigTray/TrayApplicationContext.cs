@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using NetConfigTray.Forms;
 using NetConfigTray.Helpers;
 using NetConfigTray.Models;
@@ -7,10 +8,14 @@ namespace NetConfigTray;
 
 public sealed class TrayApplicationContext : ApplicationContext
 {
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
     private readonly AppServices _services = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _autostartMenuItem;
     private readonly ToolStripMenuItem _notificationsMenuItem;
+    private readonly ContextMenuStrip _interfaceMenu = new();
     private readonly Form _hostForm;
     private readonly System.Windows.Forms.Timer _trayRefreshTimer;
     private InterfacePopupForm? _mainWindow;
@@ -53,6 +58,8 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         var contextMenu = new ContextMenuStrip();
         contextMenu.Items.Add(new ToolStripMenuItem($"Open {AppBranding.ShortName}", null, (_, _) => ShowMainWindow()));
+        contextMenu.Items.Add(BuildToolsMenu());
+        contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add(_autostartMenuItem);
         contextMenu.Items.Add(_notificationsMenuItem);
         contextMenu.Items.Add(new ToolStripSeparator());
@@ -150,11 +157,97 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (e.Button == MouseButtons.Left)
         {
-            ShowMainWindow();
+            ShowInterfaceMenu();
         }
     }
 
-    private void ShowMainWindow()
+    private void ShowInterfaceMenu()
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        _services.Snapshot.EnsureFresh(TimeSpan.FromSeconds(4));
+        var interfaces = _services.Snapshot.GetSnapshot();
+
+        _interfaceMenu.Items.Clear();
+
+        var header = new ToolStripMenuItem(interfaces.Count == 0
+            ? "No active interfaces"
+            : "Select an interface")
+        {
+            Enabled = false
+        };
+        _interfaceMenu.Items.Add(header);
+        _interfaceMenu.Items.Add(new ToolStripSeparator());
+
+        foreach (var info in interfaces)
+        {
+            var label = $"{info.Name}   ·   {info.ConfigurationLabel}   ·   {info.IPv4Address}";
+            var id = info.Id;
+            var item = new ToolStripMenuItem(label, null, (_, _) => ShowMainWindow(id))
+            {
+                ToolTipText = $"{info.Name} ({info.ConfigurationLabel}) — open details"
+            };
+            _interfaceMenu.Items.Add(item);
+        }
+
+        _interfaceMenu.Items.Add(new ToolStripSeparator());
+        _interfaceMenu.Items.Add(new ToolStripMenuItem($"Open {AppBranding.ShortName} window", null, (_, _) => ShowMainWindow()));
+
+        // Bring the (hidden) host window to the foreground so the popup dismisses on focus loss.
+        SetForegroundWindow(_hostForm.Handle);
+        _interfaceMenu.Show(Cursor.Position);
+    }
+
+    private ToolStripMenuItem BuildToolsMenu()
+    {
+        var tools = new ToolStripMenuItem("Tools");
+        tools.DropDownItems.Add(new ToolStripMenuItem("Open Toolbox…", null, (_, _) => ShowToolbox()));
+        tools.DropDownItems.Add(new ToolStripSeparator());
+        tools.DropDownItems.Add(new ToolStripMenuItem("Console (Serial / SSH / Telnet)…", null,
+            (_, _) => OpenTool(new ConsoleTerminalForm(_services))));
+        tools.DropDownItems.Add(new ToolStripMenuItem("LLDP / CDP discovery…", null,
+            (_, _) => OpenTool(new NeighborDiscoveryForm(_services))));
+        tools.DropDownItems.Add(new ToolStripMenuItem("Latency monitor…", null,
+            (_, _) => OpenTool(new LatencyMonitorForm(_services))));
+        tools.DropDownItems.Add(new ToolStripMenuItem("Port scan…", null,
+            (_, _) => OpenTool(new PortScanForm(_services))));
+        tools.DropDownItems.Add(new ToolStripMenuItem("Throughput test (iperf3)…", null,
+            (_, _) => OpenTool(new ThroughputTestForm(_services))));
+        tools.DropDownItems.Add(new ToolStripMenuItem("Wi-Fi survey…", null,
+            (_, _) => OpenTool(new WifiSurveyForm(_services))));
+        return tools;
+    }
+
+    private void ShowToolbox()
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        var toolbox = new ToolboxForm(_services);
+        SetForegroundWindow(_hostForm.Handle);
+        toolbox.Show();
+        toolbox.Activate();
+    }
+
+    private void OpenTool(Form tool)
+    {
+        if (_isExiting)
+        {
+            tool.Dispose();
+            return;
+        }
+
+        SetForegroundWindow(_hostForm.Handle);
+        tool.Show();
+        tool.Activate();
+    }
+
+    private void ShowMainWindow(string? selectInterfaceId = null)
     {
         if (_isExiting)
         {
@@ -162,7 +255,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         EnsureMainWindow();
-        _mainWindow!.ShowMainWindow();
+        _mainWindow!.ShowMainWindow(selectInterfaceId);
     }
 
     private void EnsureMainWindow()
@@ -193,6 +286,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _isExiting = true;
         _trayRefreshTimer.Stop();
         _trayRefreshTimer.Dispose();
+        _interfaceMenu.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
 

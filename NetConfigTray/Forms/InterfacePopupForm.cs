@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using NetConfigTray.Helpers;
 using NetConfigTray.Models;
 using NetConfigTray.Services;
@@ -7,8 +8,10 @@ namespace NetConfigTray.Forms;
 public sealed class InterfacePopupForm : Form
 {
     private readonly AppServices _services;
+    private readonly ContextMenuStrip _interfaceContextMenu = new();
     private readonly SplitContainer _splitContainer;
     private readonly ListView _interfaceList;
+    private readonly ThroughputSparklineControl _sparkline;
     private readonly InterfaceDetailPanel _detailPanel;
     private readonly Label _statusLabel;
     private readonly System.Windows.Forms.Timer _fastRefreshTimer;
@@ -77,12 +80,23 @@ public sealed class InterfacePopupForm : Form
         AppTheme.StyleAccentButton(refreshButton);
         refreshButton.Click += (_, _) => ForceRefresh(includeSlowDetails: true);
 
+        var toolsButton = new Button
+        {
+            Text = "Tools",
+            Size = new Size(80, 32),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right
+        };
+        AppTheme.StyleGhostButton(toolsButton);
+        toolsButton.Click += (_, _) => OpenToolbox();
+
         headerPanel.Controls.Add(accentMark);
         headerPanel.Controls.Add(titleStack);
         headerPanel.Controls.Add(refreshButton);
+        headerPanel.Controls.Add(toolsButton);
         headerPanel.Resize += (_, _) =>
         {
             refreshButton.Location = new Point(headerPanel.Width - refreshButton.Width - 20, 12);
+            toolsButton.Location = new Point(refreshButton.Left - toolsButton.Width - 8, 12);
         };
 
         _splitContainer = new SplitContainer
@@ -113,10 +127,23 @@ public sealed class InterfacePopupForm : Form
         _interfaceList.DrawColumnHeader += OnInterfaceListDrawColumnHeader;
         _interfaceList.DrawSubItem += OnInterfaceListDrawSubItem;
         _interfaceList.SelectedIndexChanged += OnInterfaceSelected;
+        _interfaceList.MouseClick += OnInterfaceListMouseClick;
 
+        _sparkline = new ThroughputSparklineControl
+        {
+            Dock = DockStyle.Bottom,
+            Height = 108
+        };
+
+        // Add the Fill control (list) first so the docked sparkline reserves bottom space.
         _splitContainer.Panel1.Controls.Add(_interfaceList);
+        _splitContainer.Panel1.Controls.Add(_sparkline);
         _splitContainer.Panel1.Padding = new Padding(8, 10, 4, 10);
-        _splitContainer.Panel1.Resize += (_, _) => ResizeInterfaceListColumns();
+        _splitContainer.Panel1.Resize += (_, _) =>
+        {
+            UpdateSparklineHeight();
+            ResizeInterfaceListColumns();
+        };
 
         _detailPanel = new InterfaceDetailPanel();
         _splitContainer.Panel2.Controls.Add(_detailPanel);
@@ -170,6 +197,7 @@ public sealed class InterfacePopupForm : Form
             BeginInvoke(() =>
             {
                 ConfigureSplitterLayout();
+                UpdateSparklineHeight();
                 ResizeInterfaceListColumns();
             });
             _services.PublicIp.RefreshAsync();
@@ -202,7 +230,7 @@ public sealed class InterfacePopupForm : Form
         };
     }
 
-    public void ShowMainWindow()
+    public void ShowMainWindow(string? selectInterfaceId = null)
     {
         if (IsDisposed)
         {
@@ -225,6 +253,12 @@ public sealed class InterfacePopupForm : Form
         ConfigureSplitterLayout();
         ResizeInterfaceListColumns();
         ApplySnapshotToUi();
+
+        if (!string.IsNullOrWhiteSpace(selectInterfaceId))
+        {
+            SelectInterface(selectInterfaceId);
+        }
+
         ForceRefresh(includeSlowDetails: false);
     }
 
@@ -296,6 +330,18 @@ public sealed class InterfacePopupForm : Form
 
         _splitContainer.Panel1MinSize = panel1Min;
         _splitContainer.Panel2MinSize = panel2Min;
+    }
+
+    private void UpdateSparklineHeight()
+    {
+        var panelHeight = _splitContainer.Panel1.ClientSize.Height;
+        if (panelHeight <= 0)
+        {
+            return;
+        }
+
+        // The throughput chart fills roughly a quarter of the left pane and scales with it.
+        _sparkline.Height = Math.Clamp(panelHeight / 4, 96, Math.Max(96, panelHeight - 120));
     }
 
     private void ResizeInterfaceListColumns()
@@ -423,6 +469,7 @@ public sealed class InterfacePopupForm : Form
         {
             _services.Snapshot.SnapshotUpdated -= OnSnapshotUpdated;
             _services.GatewayPing.GatewayPingUpdated -= OnGatewayPingUpdated;
+            _interfaceContextMenu.Dispose();
             _fastRefreshTimer.Dispose();
             _slowRefreshTimer.Dispose();
         }
@@ -441,20 +488,32 @@ public sealed class InterfacePopupForm : Form
         _services.Snapshot.RequestRefresh(includeSlowDetails);
     }
 
-    private void OnGatewayPingUpdated(string gateway)
+    private void OnGatewayPingUpdated(string host)
     {
         RunOnUiThread(() =>
         {
             if (string.IsNullOrWhiteSpace(_selectedInterfaceId) ||
-                !_interfacesById.TryGetValue(_selectedInterfaceId, out var info) ||
-                !string.Equals(info.Gateway, gateway, StringComparison.OrdinalIgnoreCase))
+                !_interfacesById.TryGetValue(_selectedInterfaceId, out var info))
+            {
+                return;
+            }
+
+            var primaryDns = info.PrimaryDns;
+            var matchesGateway = string.Equals(info.Gateway, host, StringComparison.OrdinalIgnoreCase);
+            var matchesDns = !string.IsNullOrWhiteSpace(primaryDns)
+                && string.Equals(primaryDns, host, StringComparison.OrdinalIgnoreCase);
+
+            if (!matchesGateway && !matchesDns)
             {
                 return;
             }
 
             var updated = info with
             {
-                GatewayPing = _services.GatewayPing.GetLatencyText(gateway)
+                GatewayPing = _services.GatewayPing.GetLatencyText(info.Gateway),
+                DnsPing = string.IsNullOrWhiteSpace(primaryDns)
+                    ? "No DNS"
+                    : _services.GatewayPing.GetLatencyText(primaryDns)
             };
             _interfacesById[_selectedInterfaceId] = updated;
             _detailPanel.UpdateLiveFields(updated);
@@ -633,8 +692,13 @@ public sealed class InterfacePopupForm : Form
                 info.BytesSent);
 
             _services.ThroughputHistory.AddSample(info.Id, downloadBps, uploadBps);
-            var history = _services.ThroughputHistory.GetDownloadHistory(info.Id);
-            _detailPanel.Bind(info, downloadBps, uploadBps, history);
+            _detailPanel.Bind(info, downloadBps, uploadBps);
+            _sparkline.SetTitle($"{info.Name} · THROUGHPUT");
+            _sparkline.Update(
+                _services.ThroughputHistory.GetDownloadHistory(info.Id),
+                downloadBps,
+                _services.ThroughputHistory.GetUploadHistory(info.Id),
+                uploadBps);
         }
         catch (Exception ex)
         {
@@ -682,14 +746,125 @@ public sealed class InterfacePopupForm : Form
         UpdateDetailPanelForSelection();
     }
 
+    private void OnInterfaceListMouseClick(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Right)
+        {
+            return;
+        }
+
+        var hit = _interfaceList.HitTest(e.Location);
+        if (hit.Item?.Tag is not string id || !_interfacesById.TryGetValue(id, out var info))
+        {
+            return;
+        }
+
+        hit.Item.Selected = true;
+        hit.Item.Focused = true;
+        ShowInterfaceContextMenu(info, e.Location);
+    }
+
+    private void ShowInterfaceContextMenu(NetworkInterfaceInfo info, Point location)
+    {
+        var isDhcp = info.ConfigurationType == IpConfigurationType.Dhcp;
+        var hasGateway = !string.IsNullOrWhiteSpace(info.Gateway);
+
+        _interfaceContextMenu.Items.Clear();
+
+        var headerItem = new ToolStripMenuItem(info.Name) { Enabled = false };
+        _interfaceContextMenu.Items.Add(headerItem);
+        _interfaceContextMenu.Items.Add(new ToolStripSeparator());
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("LAN scan on this interface…", null, (_, _) =>
+        {
+            var scan = new LanScanForm(info, _services);
+            scan.Show(this);
+        }));
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Find switch / port (LLDP/CDP)…", null, (_, _) =>
+        {
+            var discovery = new NeighborDiscoveryForm(_services);
+            discovery.Show(this);
+        }));
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Latency monitor to gateway…", null, (_, _) =>
+        {
+            new LatencyMonitorForm(_services).Show(this);
+        }) { Enabled = hasGateway });
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Port scan gateway…", null, (_, _) =>
+        {
+            new PortScanForm(_services, info.Gateway).Show(this);
+        }) { Enabled = hasGateway });
+
+        _interfaceContextMenu.Items.Add(new ToolStripSeparator());
+
+        var renew = new ToolStripMenuItem("Renew DHCP lease", null, (_, _) =>
+            OpenCommandWindow("Renew DHCP lease", "ipconfig", $"/renew \"{info.Name}\"")) { Enabled = isDhcp };
+        var release = new ToolStripMenuItem("Release DHCP lease", null, (_, _) =>
+            OpenCommandWindow("Release DHCP lease", "ipconfig", $"/release \"{info.Name}\"")) { Enabled = isDhcp };
+        _interfaceContextMenu.Items.Add(renew);
+        _interfaceContextMenu.Items.Add(release);
+
+        _interfaceContextMenu.Items.Add(new ToolStripSeparator());
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Flush DNS cache", null, (_, _) =>
+            OpenCommandWindow("Flush DNS cache", "ipconfig", "/flushdns")));
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Traceroute to gateway…", null, (_, _) =>
+            OpenCommandWindow("Traceroute", "tracert", info.Gateway)) { Enabled = hasGateway });
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Continuous ping to gateway…", null, (_, _) =>
+            OpenCommandWindow("Ping gateway", "ping", $"-t {info.Gateway}")) { Enabled = hasGateway });
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("ipconfig /all…", null, (_, _) =>
+            OpenCommandWindow("ipconfig /all", "ipconfig", "/all")));
+
+        _interfaceContextMenu.Items.Add(new ToolStripSeparator());
+
+        _interfaceContextMenu.Items.Add(new ToolStripMenuItem("Open Windows network connections", null, (_, _) =>
+            OpenNetworkConnections()));
+
+        _interfaceContextMenu.Show(_interfaceList, location);
+    }
+
+    private void OpenToolbox()
+    {
+        var toolbox = new ToolboxForm(_services);
+        toolbox.Show(this);
+    }
+
+    private void OpenCommandWindow(string title, string fileName, string arguments)
+    {
+        var form = new CommandOutputForm(title, fileName, arguments);
+        form.Show(this);
+    }
+
+    private static void OpenNetworkConnections()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("ncpa.cpl") { UseShellExecute = true });
+        }
+        catch
+        {
+            // Settings shell not available.
+        }
+    }
+
     private NetworkInterfaceInfo EnrichInterface(NetworkInterfaceInfo info)
     {
         _services.GatewayPing.QueuePing(info.Gateway);
+        var primaryDns = info.PrimaryDns;
+        if (!string.IsNullOrWhiteSpace(primaryDns))
+        {
+            _services.GatewayPing.QueuePing(primaryDns);
+        }
 
         return info with
         {
             ConnectionUptime = _services.Uptime.GetUptimeText(info.Id, isActive: true),
-            GatewayPing = _services.GatewayPing.GetLatencyText(info.Gateway)
+            GatewayPing = _services.GatewayPing.GetLatencyText(info.Gateway),
+            DnsPing = string.IsNullOrWhiteSpace(primaryDns)
+                ? "No DNS"
+                : _services.GatewayPing.GetLatencyText(primaryDns)
         };
     }
 
@@ -724,17 +899,28 @@ public sealed class InterfacePopupForm : Form
             counts.BytesSent);
 
         _services.ThroughputHistory.AddSample(_selectedInterfaceId, downloadBps, uploadBps);
-        _detailPanel.UpdateThroughput(
+        _detailPanel.UpdateThroughput(downloadBps, uploadBps);
+        _sparkline.Update(
+            _services.ThroughputHistory.GetDownloadHistory(_selectedInterfaceId),
             downloadBps,
-            uploadBps,
-            _services.ThroughputHistory.GetDownloadHistory(_selectedInterfaceId));
+            _services.ThroughputHistory.GetUploadHistory(_selectedInterfaceId),
+            uploadBps);
 
         if (_interfacesById.TryGetValue(_selectedInterfaceId, out var refreshed))
         {
+            var primaryDns = refreshed.PrimaryDns;
+            if (!string.IsNullOrWhiteSpace(primaryDns))
+            {
+                _services.GatewayPing.QueuePing(primaryDns);
+            }
+
             refreshed = refreshed with
             {
                 ConnectionUptime = _services.Uptime.GetUptimeText(_selectedInterfaceId, isActive: true),
-                GatewayPing = _services.GatewayPing.GetLatencyText(refreshed.Gateway)
+                GatewayPing = _services.GatewayPing.GetLatencyText(refreshed.Gateway),
+                DnsPing = string.IsNullOrWhiteSpace(primaryDns)
+                    ? "No DNS"
+                    : _services.GatewayPing.GetLatencyText(primaryDns)
             };
             _interfacesById[_selectedInterfaceId] = refreshed;
             _detailPanel.UpdateLiveFields(refreshed);

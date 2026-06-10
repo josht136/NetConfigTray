@@ -437,7 +437,12 @@ public sealed class NetworkInfoService
             var dhcpEnabled = obj["DHCPEnabled"] is true;
             var description = obj["Description"] as string ?? string.Empty;
             var ipAddresses = (obj["IPAddress"] as string[]) ?? Array.Empty<string>();
-            var dhcpServer = (obj["DHCPServer"] as string[])?.FirstOrDefault();
+            // Win32_NetworkAdapterConfiguration.DHCPServer is a single string, not an array.
+            var dhcpServer = obj["DHCPServer"] as string;
+            if (string.IsNullOrWhiteSpace(dhcpServer) || dhcpServer == "255.255.255.255")
+            {
+                dhcpServer = null;
+            }
             var leaseObtained = WmiDateTimeHelper.Format(obj["DhcpLeaseObtained"]);
             var leaseExpires = WmiDateTimeHelper.Format(obj["DhcpLeaseExpires"]);
 

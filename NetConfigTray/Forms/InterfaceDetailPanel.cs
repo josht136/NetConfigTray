@@ -12,7 +12,6 @@ public sealed class InterfaceDetailPanel : Panel
     private NetworkInterfaceInfo? _info;
     private long _downloadBps;
     private long _uploadBps;
-    private ThroughputSparklineControl? _sparkline;
     private string? _boundInterfaceId;
     private string? _layoutSignature;
 
@@ -55,7 +54,6 @@ public sealed class InterfaceDetailPanel : Panel
     public void ShowPlaceholder(string message)
     {
         _info = null;
-        _sparkline = null;
         _boundInterfaceId = null;
         _layoutSignature = null;
 
@@ -86,8 +84,7 @@ public sealed class InterfaceDetailPanel : Panel
     public void Bind(
         NetworkInterfaceInfo info,
         long downloadBps,
-        long uploadBps,
-        IReadOnlyList<long> downloadHistory)
+        long uploadBps)
     {
         var layoutSignature = BuildLayoutSignature(info);
         var canUpdateInPlace = _boundInterfaceId == info.Id
@@ -103,18 +100,18 @@ public sealed class InterfaceDetailPanel : Panel
 
         if (canUpdateInPlace)
         {
-            ApplyLiveValues(downloadHistory);
+            ApplyLiveValues();
             return;
         }
 
-        Rebuild(downloadHistory);
+        Rebuild();
     }
 
-    public void UpdateThroughput(long downloadBps, long uploadBps, IReadOnlyList<long> downloadHistory)
+    public void UpdateThroughput(long downloadBps, long uploadBps)
     {
         _downloadBps = downloadBps;
         _uploadBps = uploadBps;
-        ApplyLiveValues(downloadHistory);
+        ApplyLiveValues();
     }
 
     public void UpdateLiveFields(NetworkInterfaceInfo info)
@@ -122,9 +119,10 @@ public sealed class InterfaceDetailPanel : Panel
         _info = info;
         UpdateValue("Connection uptime", info.ConnectionUptime ?? "Unknown");
         UpdateValue("Gateway ping", info.GatewayPing ?? "—");
+        UpdateValue("DNS ping", info.DnsPing ?? "—");
     }
 
-    private void ApplyLiveValues(IReadOnlyList<long> downloadHistory)
+    private void ApplyLiveValues()
     {
         if (_info is null)
         {
@@ -135,7 +133,7 @@ public sealed class InterfaceDetailPanel : Panel
         UpdateValue("Upload", FormatHelper.FormatThroughput(_uploadBps));
         UpdateValue("Connection uptime", _info.ConnectionUptime ?? "Unknown");
         UpdateValue("Gateway ping", _info.GatewayPing ?? "—");
-        _sparkline?.SetSamples(downloadHistory);
+        UpdateValue("DNS ping", _info.DnsPing ?? "—");
     }
 
     private static string BuildLayoutSignature(NetworkInterfaceInfo info)
@@ -181,7 +179,7 @@ public sealed class InterfaceDetailPanel : Panel
             deviceSignature);
     }
 
-    private void Rebuild(IReadOnlyList<long> downloadHistory)
+    private void Rebuild()
     {
         if (_info is null)
         {
@@ -192,7 +190,6 @@ public sealed class InterfaceDetailPanel : Panel
         try
         {
             Controls.Clear();
-            _sparkline = null;
 
             var y = TopInset;
             var contentWidth = GetContentWidth();
@@ -211,6 +208,7 @@ public sealed class InterfaceDetailPanel : Panel
             AddDetailRow("Gateway ping", _info.GatewayPing ?? "—", ref y, contentWidth);
             AddDetailRow("Route metric", _info.RouteMetric?.ToString() ?? "Unknown", ref y, contentWidth);
             AddDetailRow("DNS servers", _info.DnsServers, ref y, contentWidth);
+            AddDetailRow("DNS ping", _info.DnsPing ?? "—", ref y, contentWidth);
 
             if (_info.Subnet is not null)
             {
@@ -236,16 +234,6 @@ public sealed class InterfaceDetailPanel : Panel
                 AddDetailRow("Band", _info.WifiBand ?? "Unknown", ref y, contentWidth);
                 AddDetailRow("Radio type", _info.WifiRadioType ?? "Unknown", ref y, contentWidth);
             }
-
-            AddSectionHeader("Throughput history", ref y, contentWidth);
-            _sparkline = new ThroughputSparklineControl
-            {
-                Width = contentWidth,
-                Location = new Point(ContentLeft, y)
-            };
-            _sparkline.SetSamples(downloadHistory);
-            Controls.Add(_sparkline);
-            y += _sparkline.Height + 12;
 
             if (_info.ConnectedDevice is not null)
             {
@@ -447,7 +435,8 @@ public sealed class InterfaceDetailPanel : Panel
             $"Gateway: {_info.Gateway}",
             $"Gateway ping: {_info.GatewayPing}",
             $"Route metric: {_info.RouteMetric}",
-            $"DNS: {_info.DnsServers}"
+            $"DNS: {_info.DnsServers}",
+            $"DNS ping: {_info.DnsPing}"
         };
 
         if (_info.Subnet is not null)
