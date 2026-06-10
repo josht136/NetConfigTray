@@ -80,12 +80,23 @@ public sealed class InterfacePopupForm : Form
         AppTheme.StyleAccentButton(refreshButton);
         refreshButton.Click += (_, _) => ForceRefresh(includeSlowDetails: true);
 
+        var toolsButton = new Button
+        {
+            Text = "Tools",
+            Size = new Size(80, 32),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right
+        };
+        AppTheme.StyleGhostButton(toolsButton);
+        toolsButton.Click += (_, _) => OpenToolbox();
+
         headerPanel.Controls.Add(accentMark);
         headerPanel.Controls.Add(titleStack);
         headerPanel.Controls.Add(refreshButton);
+        headerPanel.Controls.Add(toolsButton);
         headerPanel.Resize += (_, _) =>
         {
             refreshButton.Location = new Point(headerPanel.Width - refreshButton.Width - 20, 12);
+            toolsButton.Location = new Point(refreshButton.Left - toolsButton.Width - 8, 12);
         };
 
         _splitContainer = new SplitContainer
@@ -796,6 +807,12 @@ public sealed class InterfacePopupForm : Form
             OpenNetworkConnections()));
 
         _interfaceContextMenu.Show(_interfaceList, location);
+    }
+
+    private void OpenToolbox()
+    {
+        var toolbox = new ToolboxForm(_services);
+        toolbox.Show(this);
     }
 
     private void OpenCommandWindow(string title, string fileName, string arguments)
